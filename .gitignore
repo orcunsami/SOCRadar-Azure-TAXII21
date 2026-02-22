@@ -1,0 +1,13 @@
+.env
+test.config
+*.local
+__pycache__/
+*.pyc
+.venv/
+.python_packages/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+local.settings.json
+potential-app-taxii21.txt

@@ -1,0 +1,550 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0",
+    "metadata": {
+        "title": "SOCRadar-TAXII-Import",
+        "description": "TAXII 2.1 threat intelligence ingestion with hybrid Logic App + Azure Function architecture. Fetches STIX indicators from SOCRadar TAXII server, parses them via Azure Function, and uploads to Microsoft Sentinel TI.",
+        "version": "1.0.0",
+        "author": "SOCRadar",
+        "lastUpdateTime": "2026-02-21T00:00:00.000Z"
+    },
+    "parameters": {
+        "PlaybookName": {
+            "type": "string",
+            "defaultValue": "SOCRadar-TAXII-Import",
+            "metadata": { "description": "Name of the Logic App" }
+        },
+        "TAXIIServerUrl": {
+            "type": "string",
+            "metadata": { "description": "TAXII 2.1 server base URL (e.g., https://platform.socradar.com/taxii2)" }
+        },
+        "CollectionId": {
+            "type": "string",
+            "metadata": { "description": "TAXII collection ID to poll" }
+        },
+        "TAXIIUsername": {
+            "type": "string",
+            "metadata": { "description": "TAXII server username (usually SOCRadar Company ID)" }
+        },
+        "TAXIIPassword": {
+            "type": "securestring",
+            "metadata": { "description": "TAXII server password (usually SOCRadar API Key)" }
+        },
+        "WorkspaceName": {
+            "type": "string",
+            "metadata": { "description": "Microsoft Sentinel Log Analytics Workspace Name" }
+        },
+        "FunctionPackageUrl": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "URL to the Azure Function deployment package (zip). Leave empty to deploy function code manually." }
+        },
+        "PollingIntervalMinutes": {
+            "type": "int",
+            "defaultValue": 15,
+            "minValue": 5,
+            "maxValue": 1440,
+            "metadata": { "description": "Polling interval in minutes (5-1440)" }
+        },
+        "MinConfidence": {
+            "type": "int",
+            "defaultValue": 0,
+            "minValue": 0,
+            "maxValue": 100,
+            "metadata": { "description": "Minimum confidence score to upload indicator (0-100)" }
+        },
+        "MaxPagesPerRun": {
+            "type": "int",
+            "defaultValue": 100,
+            "minValue": 1,
+            "maxValue": 1000,
+            "metadata": { "description": "Maximum TAXII pages to process per run" }
+        },
+        "EnableAuditLogging": {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": { "description": "Enable audit logging to Log Analytics custom table" }
+        },
+        "AuditDcrEndpoint": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Audit DCR endpoint (required if EnableAuditLogging=true)" }
+        },
+        "AuditDcrImmutableId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Audit DCR immutable ID (required if EnableAuditLogging=true)" }
+        },
+        "_triggerStartTime": {
+            "type": "string",
+            "defaultValue": "[dateTimeAdd(utcNow(), 'PT3M')]",
+            "metadata": { "description": "Trigger start time (3 min delay for role propagation)" }
+        }
+    },
+    "variables": {
+        "storageAccountName": "[concat('srtaxii', uniqueString(resourceGroup().id))]",
+        "appServicePlanName": "[concat('asp-', parameters('PlaybookName'))]",
+        "appInsightsName": "[concat('ai-', parameters('PlaybookName'))]",
+        "functionAppName": "[concat('func-socradar-taxii-', uniqueString(resourceGroup().id))]",
+        "tableName": "TAXIIState",
+        "SentinelContributorRoleId": "ab8e14d6-4a74-4a29-9ba8-549422addade",
+        "StorageTableDataContributorRoleId": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",
+        "AuditStreamName": "Custom-SOCRadar_TAXII_Import_CL"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2023-05-01",
+            "name": "[variables('storageAccountName')]",
+            "location": "[resourceGroup().location]",
+            "sku": { "name": "Standard_LRS" },
+            "kind": "StorageV2",
+            "properties": {
+                "supportsHttpsTrafficOnly": true,
+                "minimumTlsVersion": "TLS1_2"
+            }
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts/tableServices",
+            "apiVersion": "2023-05-01",
+            "name": "[concat(variables('storageAccountName'), '/default')]",
+            "dependsOn": [ "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]" ]
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+            "apiVersion": "2023-05-01",
+            "name": "[concat(variables('storageAccountName'), '/default/', variables('tableName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('storageAccountName'), 'default')]"
+            ]
+        },
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2023-12-01",
+            "name": "[variables('appServicePlanName')]",
+            "location": "[resourceGroup().location]",
+            "sku": { "name": "Y1", "tier": "Dynamic" },
+            "properties": { "reserved": true }
+        },
+        {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2020-02-02",
+            "name": "[variables('appInsightsName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "web",
+            "properties": { "Application_Type": "web" }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2023-12-01",
+            "name": "[variables('functionAppName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "functionapp,linux",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+                "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+            ],
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "siteConfig": {
+                    "linuxFxVersion": "Python|3.11",
+                    "appSettings": [
+                        { "name": "AzureWebJobsStorage", "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';EndpointSuffix=', environment().suffixes.storage, ';AccountKey=', listkeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01').keys[0].value)]" },
+                        { "name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4" },
+                        { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "python" },
+                        { "name": "APPINSIGHTS_INSTRUMENTATIONKEY", "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]" },
+                        { "name": "WEBSITE_RUN_FROM_PACKAGE", "value": "[if(empty(parameters('FunctionPackageUrl')), '0', parameters('FunctionPackageUrl'))]" }
+                    ]
+                },
+                "httpsOnly": true
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2019-05-01",
+            "name": "[parameters('PlaybookName')]",
+            "location": "[resourceGroup().location]",
+            "identity": { "type": "SystemAssigned" },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageAccountName'), 'default', variables('tableName'))]"
+            ],
+            "properties": {
+                "state": "Disabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "TAXIIServerUrl": { "type": "String" },
+                        "CollectionId": { "type": "String" },
+                        "TAXIIUsername": { "type": "String" },
+                        "TAXIIPassword": { "type": "SecureString" },
+                        "WorkspaceName": { "type": "String" },
+                        "FunctionAppUrl": { "type": "String" },
+                        "StorageAccountName": { "type": "String" },
+                        "PollingIntervalMinutes": { "type": "Int" },
+                        "MinConfidence": { "type": "Int" },
+                        "MaxPagesPerRun": { "type": "Int" },
+                        "EnableAuditLogging": { "type": "Bool", "defaultValue": false },
+                        "AuditDcrEndpoint": { "type": "String", "defaultValue": "" },
+                        "AuditDcrImmutableId": { "type": "String", "defaultValue": "" },
+                        "AuditStreamName": { "type": "String", "defaultValue": "Custom-SOCRadar_TAXII_Import_CL" },
+                        "SubscriptionId": { "type": "String" },
+                        "ResourceGroupName": { "type": "String" }
+                    },
+                    "triggers": {
+                        "Recurrence": {
+                            "type": "Recurrence",
+                            "recurrence": {
+                                "frequency": "Minute",
+                                "interval": "[parameters('PollingIntervalMinutes')]",
+                                "startTime": "[parameters('_triggerStartTime')]"
+                            },
+                            "operationOptions": "SingleInstance"
+                        }
+                    },
+                    "actions": {
+                        "Build_Auth_Header": {
+                            "type": "Compose",
+                            "inputs": "@concat('Basic ', base64(concat(parameters('TAXIIUsername'), ':', parameters('TAXIIPassword'))))",
+                            "runAfter": {}
+                        },
+                        "Initialize_RunId": {
+                            "type": "Compose",
+                            "inputs": "@guid()",
+                            "runAfter": { "Build_Auth_Header": ["Succeeded"] }
+                        },
+                        "Initialize_PageCount": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "page_count", "type": "integer", "value": 0 }] },
+                            "runAfter": { "Initialize_RunId": ["Succeeded"] }
+                        },
+                        "Initialize_MorePages": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "more_pages", "type": "boolean", "value": true }] },
+                            "runAfter": { "Initialize_PageCount": ["Succeeded"] }
+                        },
+                        "Initialize_Cursor": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "cursor", "type": "string", "value": "" }] },
+                            "runAfter": { "Initialize_MorePages": ["Succeeded"] }
+                        },
+                        "Initialize_AddedAfter": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "added_after", "type": "string", "value": "@{addHours(utcNow(), -24)}" }] },
+                            "runAfter": { "Initialize_Cursor": ["Succeeded"] }
+                        },
+                        "Initialize_IndicatorsCreated": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "indicators_created", "type": "integer", "value": 0 }] },
+                            "runAfter": { "Initialize_AddedAfter": ["Succeeded"] }
+                        },
+                        "Initialize_IndicatorsFailed": {
+                            "type": "InitializeVariable",
+                            "inputs": { "variables": [{ "name": "indicators_failed", "type": "integer", "value": 0 }] },
+                            "runAfter": { "Initialize_IndicatorsCreated": ["Succeeded"] }
+                        },
+                        "Read_State": {
+                            "type": "Http",
+                            "inputs": {
+                                "method": "GET",
+                                "uri": "@{concat('https://', parameters('StorageAccountName'), '.table.core.windows.net/', 'TAXIIState(PartitionKey=''', parameters('CollectionId'), ''',RowKey=''state'')')}",
+                                "headers": {
+                                    "Accept": "application/json;odata=noreplace",
+                                    "x-ms-version": "2020-12-06"
+                                },
+                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com" }
+                            },
+                            "runAfter": { "Initialize_IndicatorsFailed": ["Succeeded"] }
+                        },
+                        "Check_State_Exists": {
+                            "type": "If",
+                            "expression": { "and": [{ "equals": ["@outputs('Read_State')['statusCode']", 200] }] },
+                            "actions": {
+                                "Restore_Cursor": {
+                                    "type": "SetVariable",
+                                    "inputs": { "name": "cursor", "value": "@{coalesce(body('Read_State')?['Cursor'], '')}" },
+                                    "runAfter": {}
+                                },
+                                "Restore_AddedAfter": {
+                                    "type": "SetVariable",
+                                    "inputs": { "name": "added_after", "value": "@{coalesce(body('Read_State')?['AddedAfter'], addHours(utcNow(), -24))}" },
+                                    "runAfter": { "Restore_Cursor": ["Succeeded"] }
+                                }
+                            },
+                            "else": { "actions": {} },
+                            "runAfter": { "Read_State": ["Succeeded", "Failed"] }
+                        },
+                        "Pagination_Loop": {
+                            "type": "Until",
+                            "expression": "@or(not(variables('more_pages')), greaterOrEquals(variables('page_count'), parameters('MaxPagesPerRun')))",
+                            "limit": { "count": 1000, "timeout": "PT1H" },
+                            "actions": {
+                                "Build_TAXII_URL": {
+                                    "type": "Compose",
+                                    "inputs": "@if(empty(variables('cursor')), concat(parameters('TAXIIServerUrl'), '/collections/', parameters('CollectionId'), '/objects/?added_after=', variables('added_after'), '&match[version]=last'), concat(parameters('TAXIIServerUrl'), '/collections/', parameters('CollectionId'), '/objects/?next=', variables('cursor'), '&match[version]=last'))",
+                                    "runAfter": {}
+                                },
+                                "Fetch_TAXII_Page": {
+                                    "type": "Http",
+                                    "inputs": {
+                                        "method": "GET",
+                                        "uri": "@outputs('Build_TAXII_URL')",
+                                        "headers": {
+                                            "Accept": "application/taxii+json;version=2.1",
+                                            "Authorization": "@outputs('Build_Auth_Header')"
+                                        },
+                                        "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT10S", "maximumInterval": "PT5M" }
+                                    },
+                                    "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+                                    "runAfter": { "Build_TAXII_URL": ["Succeeded"] }
+                                },
+                                "Check_Objects_Exist": {
+                                    "type": "If",
+                                    "expression": { "and": [{ "greater": ["@length(coalesce(body('Fetch_TAXII_Page')?['objects'], json('[]')))", 0] }] },
+                                    "actions": {
+                                        "Call_STIX_Parser": {
+                                            "type": "Http",
+                                            "inputs": {
+                                                "method": "POST",
+                                                "uri": "@parameters('FunctionAppUrl')",
+                                                "headers": { "Content-Type": "application/json" },
+                                                "body": {
+                                                    "objects": "@body('Fetch_TAXII_Page')?['objects']",
+                                                    "collectionId": "@parameters('CollectionId')"
+                                                }
+                                            },
+                                            "runAfter": {}
+                                        },
+                                        "For_Each_Indicator": {
+                                            "type": "Foreach",
+                                            "foreach": "@coalesce(body('Call_STIX_Parser')?['indicators'], json('[]'))",
+                                            "runtimeConfiguration": { "concurrency": { "repetitions": 10 } },
+                                            "actions": {
+                                                "Check_Confidence": {
+                                                    "type": "If",
+                                                    "expression": { "and": [{ "greaterOrEquals": ["@coalesce(items('For_Each_Indicator')?['properties']?['confidence'], 0)", "@parameters('MinConfidence')"] }] },
+                                                    "actions": {
+                                                        "Upload_To_Sentinel_TI": {
+                                                            "type": "Http",
+                                                            "inputs": {
+                                                                "method": "POST",
+                                                                "uri": "https://management.azure.com/subscriptions/@{parameters('SubscriptionId')}/resourceGroups/@{parameters('ResourceGroupName')}/providers/Microsoft.OperationalInsights/workspaces/@{parameters('WorkspaceName')}/providers/Microsoft.SecurityInsights/threatIntelligence/main/createIndicator?api-version=2024-03-01",
+                                                                "headers": { "Content-Type": "application/json" },
+                                                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com" },
+                                                                "body": "@items('For_Each_Indicator')",
+                                                                "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT5S", "maximumInterval": "PT1M" }
+                                                            },
+                                                            "runAfter": {}
+                                                        }
+                                                    },
+                                                    "else": { "actions": {} },
+                                                    "runAfter": {}
+                                                }
+                                            },
+                                            "runAfter": { "Call_STIX_Parser": ["Succeeded"] }
+                                        },
+                                        "For_Each_Revoked": {
+                                            "type": "Foreach",
+                                            "foreach": "@coalesce(body('Call_STIX_Parser')?['revoked_indicators'], json('[]'))",
+                                            "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                                            "actions": {
+                                                "Query_Revoked_Indicator": {
+                                                    "type": "Http",
+                                                    "inputs": {
+                                                        "method": "POST",
+                                                        "uri": "https://management.azure.com/subscriptions/@{parameters('SubscriptionId')}/resourceGroups/@{parameters('ResourceGroupName')}/providers/Microsoft.OperationalInsights/workspaces/@{parameters('WorkspaceName')}/providers/Microsoft.SecurityInsights/threatIntelligence/main/queryIndicators?api-version=2024-03-01",
+                                                        "headers": { "Content-Type": "application/json" },
+                                                        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com" },
+                                                        "body": {
+                                                            "keywords": "@{items('For_Each_Revoked')?['stixId']}",
+                                                            "pageSize": 1
+                                                        },
+                                                        "retryPolicy": { "type": "exponential", "count": 2, "interval": "PT5S", "maximumInterval": "PT30S" }
+                                                    },
+                                                    "runAfter": {}
+                                                },
+                                                "Check_Revoked_Found": {
+                                                    "type": "If",
+                                                    "expression": { "and": [{ "greater": ["@length(coalesce(body('Query_Revoked_Indicator')?['value'], json('[]')))", 0] }] },
+                                                    "actions": {
+                                                        "Delete_Revoked_Indicator": {
+                                                            "type": "Http",
+                                                            "inputs": {
+                                                                "method": "DELETE",
+                                                                "uri": "https://management.azure.com/subscriptions/@{parameters('SubscriptionId')}/resourceGroups/@{parameters('ResourceGroupName')}/providers/Microsoft.OperationalInsights/workspaces/@{parameters('WorkspaceName')}/providers/Microsoft.SecurityInsights/threatIntelligence/main/indicators/@{body('Query_Revoked_Indicator')?['value'][0]?['name']}?api-version=2024-03-01",
+                                                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com" },
+                                                                "retryPolicy": { "type": "exponential", "count": 2, "interval": "PT5S", "maximumInterval": "PT30S" }
+                                                            },
+                                                            "runAfter": {}
+                                                        }
+                                                    },
+                                                    "else": { "actions": {} },
+                                                    "runAfter": { "Query_Revoked_Indicator": ["Succeeded"] }
+                                                }
+                                            },
+                                            "runAfter": { "Call_STIX_Parser": ["Succeeded"] }
+                                        },
+                                        "Save_Checkpoint": {
+                                            "type": "Http",
+                                            "inputs": {
+                                                "method": "PUT",
+                                                "uri": "@{concat('https://', parameters('StorageAccountName'), '.table.core.windows.net/', 'TAXIIState(PartitionKey=''', parameters('CollectionId'), ''',RowKey=''state'')')}",
+                                                "headers": {
+                                                    "Content-Type": "application/json",
+                                                    "x-ms-version": "2020-12-06",
+                                                    "If-Match": "*"
+                                                },
+                                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com" },
+                                                "body": {
+                                                    "PartitionKey": "@{parameters('CollectionId')}",
+                                                    "RowKey": "state",
+                                                    "Cursor": "@{coalesce(body('Fetch_TAXII_Page')?['next'], '')}",
+                                                    "AddedAfter": "@{utcNow()}",
+                                                    "LastRun": "@{utcNow()}",
+                                                    "Status": "running"
+                                                }
+                                            },
+                                            "runAfter": { "For_Each_Indicator": ["Succeeded", "Failed"], "For_Each_Revoked": ["Succeeded", "Failed", "Skipped"] }
+                                        },
+                                        "Update_Cursor": {
+                                            "type": "SetVariable",
+                                            "inputs": { "name": "cursor", "value": "@{coalesce(body('Fetch_TAXII_Page')?['next'], '')}" },
+                                            "runAfter": { "Save_Checkpoint": ["Succeeded"] }
+                                        },
+                                        "Update_MorePages": {
+                                            "type": "SetVariable",
+                                            "inputs": { "name": "more_pages", "value": "@coalesce(body('Fetch_TAXII_Page')?['more'], false)" },
+                                            "runAfter": { "Update_Cursor": ["Succeeded"] }
+                                        }
+                                    },
+                                    "else": {
+                                        "actions": {
+                                            "Set_No_More_Pages": {
+                                                "type": "SetVariable",
+                                                "inputs": { "name": "more_pages", "value": false },
+                                                "runAfter": {}
+                                            }
+                                        }
+                                    },
+                                    "runAfter": { "Fetch_TAXII_Page": ["Succeeded"] }
+                                },
+                                "Increment_PageCount": {
+                                    "type": "IncrementVariable",
+                                    "inputs": { "name": "page_count", "value": 1 },
+                                    "runAfter": { "Check_Objects_Exist": ["Succeeded"] }
+                                }
+                            },
+                            "runAfter": { "Check_State_Exists": ["Succeeded"] }
+                        },
+                        "Update_Final_State": {
+                            "type": "Http",
+                            "inputs": {
+                                "method": "PUT",
+                                "uri": "@{concat('https://', parameters('StorageAccountName'), '.table.core.windows.net/', 'TAXIIState(PartitionKey=''', parameters('CollectionId'), ''',RowKey=''state'')')}",
+                                "headers": {
+                                    "Content-Type": "application/json",
+                                    "x-ms-version": "2020-12-06",
+                                    "If-Match": "*"
+                                },
+                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com" },
+                                "body": {
+                                    "PartitionKey": "@{parameters('CollectionId')}",
+                                    "RowKey": "state",
+                                    "Cursor": "@{variables('cursor')}",
+                                    "AddedAfter": "@{utcNow()}",
+                                    "LastRun": "@{utcNow()}",
+                                    "Status": "idle",
+                                    "PageCount": "@{variables('page_count')}"
+                                }
+                            },
+                            "runAfter": { "Pagination_Loop": ["Succeeded", "Failed"] }
+                        },
+                        "Check_Audit_Enabled": {
+                            "type": "If",
+                            "expression": { "and": [{ "equals": ["@parameters('EnableAuditLogging')", true] }] },
+                            "actions": {
+                                "Log_Audit": {
+                                    "type": "Http",
+                                    "inputs": {
+                                        "method": "POST",
+                                        "uri": "@{concat(parameters('AuditDcrEndpoint'), '/dataCollectionRules/', parameters('AuditDcrImmutableId'), '/streams/', parameters('AuditStreamName'), '?api-version=2023-01-01')}",
+                                        "headers": { "Content-Type": "application/json" },
+                                        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://monitor.azure.com" },
+                                        "body": [{
+                                            "TimeGenerated": "@{utcNow()}",
+                                            "CollectionID": "@{parameters('CollectionId')}",
+                                            "RunID": "@{outputs('Initialize_RunId')}",
+                                            "IndicatorsProcessed": "@{variables('page_count')}",
+                                            "IndicatorsCreated": 0,
+                                            "IndicatorsFailed": 0,
+                                            "PagesFetched": "@{variables('page_count')}",
+                                            "DurationMs": 0,
+                                            "Status": "@{if(equals(result('Pagination_Loop')?[0]?['status'], 'Failed'), 'Failed', 'Success')}",
+                                            "ErrorMessage": ""
+                                        }]
+                                    },
+                                    "runAfter": {}
+                                }
+                            },
+                            "else": { "actions": {} },
+                            "runAfter": { "Update_Final_State": ["Succeeded"] }
+                        }
+                    }
+                },
+                "parameters": {
+                    "TAXIIServerUrl": { "value": "[parameters('TAXIIServerUrl')]" },
+                    "CollectionId": { "value": "[parameters('CollectionId')]" },
+                    "TAXIIUsername": { "value": "[parameters('TAXIIUsername')]" },
+                    "TAXIIPassword": { "value": "[parameters('TAXIIPassword')]" },
+                    "WorkspaceName": { "value": "[parameters('WorkspaceName')]" },
+                    "FunctionAppUrl": { "value": "[concat('https://', variables('functionAppName'), '.azurewebsites.net/api/ParseSTIXIndicators?code=', listkeys(concat(resourceId('Microsoft.Web/sites', variables('functionAppName')), '/host/default'), '2023-12-01').functionKeys.default)]" },
+                    "StorageAccountName": { "value": "[variables('storageAccountName')]" },
+                    "PollingIntervalMinutes": { "value": "[parameters('PollingIntervalMinutes')]" },
+                    "MinConfidence": { "value": "[parameters('MinConfidence')]" },
+                    "MaxPagesPerRun": { "value": "[parameters('MaxPagesPerRun')]" },
+                    "EnableAuditLogging": { "value": "[parameters('EnableAuditLogging')]" },
+                    "AuditDcrEndpoint": { "value": "[parameters('AuditDcrEndpoint')]" },
+                    "AuditDcrImmutableId": { "value": "[parameters('AuditDcrImmutableId')]" },
+                    "AuditStreamName": { "value": "[variables('AuditStreamName')]" },
+                    "SubscriptionId": { "value": "[subscription().subscriptionId]" },
+                    "ResourceGroupName": { "value": "[resourceGroup().name]" }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(resourceGroup().id, parameters('PlaybookName'), variables('SentinelContributorRoleId'), deployment().name)]",
+            "dependsOn": [ "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]" ],
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('SentinelContributorRoleId'))]",
+                "principalId": "[reference(resourceId('Microsoft.Logic/workflows', parameters('PlaybookName')), '2019-05-01', 'Full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), parameters('PlaybookName'), variables('StorageTableDataContributorRoleId'), deployment().name)]",
+            "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('StorageTableDataContributorRoleId'))]",
+                "principalId": "[reference(resourceId('Microsoft.Logic/workflows', parameters('PlaybookName')), '2019-05-01', 'Full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        }
+    ],
+    "outputs": {
+        "logicAppName": { "type": "string", "value": "[parameters('PlaybookName')]" },
+        "functionAppName": { "type": "string", "value": "[variables('functionAppName')]" },
+        "storageAccountName": { "type": "string", "value": "[variables('storageAccountName')]" },
+        "pollingInterval": { "type": "string", "value": "[concat(parameters('PollingIntervalMinutes'), ' minutes')]" },
+        "minConfidence": { "type": "int", "value": "[parameters('MinConfidence')]" }
+    }
+}
