@@ -16,7 +16,7 @@ Ingests STIX 2.1 threat indicators from SOCRadar's TAXII 2.1 server into Microso
 
 | Parameter | Description |
 |-----------|-------------|
-| `TAXIIServerUrl` | TAXII 2.1 server URL (e.g., `https://platform.socradar.com/taxii2`) |
+| `TAXIIServerUrl` | TAXII 2.1 server URL (e.g., `https://taxii2.socradar.com`) |
 | `CollectionId` | TAXII collection ID to poll |
 | `TAXIIUsername` | TAXII username (usually your SOCRadar Company ID) |
 | `TAXIIPassword` | TAXII password (your SOCRadar API Key) |

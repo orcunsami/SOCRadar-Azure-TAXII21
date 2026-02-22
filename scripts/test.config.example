@@ -6,7 +6,7 @@ WORKSPACE_NAME="your-sentinel-workspace"
 LOCATION="northeurope"
 
 # TAXII Server Settings
-TAXII_SERVER_URL="https://platform.socradar.com/taxii2"
+TAXII_SERVER_URL="https://taxii2.socradar.com"
 COLLECTION_ID="your-collection-id"
 TAXII_USERNAME="your-company-id"
 
