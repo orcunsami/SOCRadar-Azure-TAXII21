@@ -1,0 +1,25 @@
+id: d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a
+name: SOCRadar TAXII - Ingestion Health
+description: |
+  Monitors TAXII ingestion health by checking recent import runs.
+  Identifies failed runs and low indicator creation rates.
+  Requires SOCRadar-TAXII-Infrastructure playbook deployment.
+severity: Medium
+requiredDataConnectors: []
+tactics:
+  - Collection
+relevantTechniques: []
+query: |
+  SOCRadar_TAXII_Import_CL
+  | where TimeGenerated > ago(7d)
+  | summarize
+      TotalRuns=count(),
+      SuccessRuns=countif(Status == "Success"),
+      FailedRuns=countif(Status == "Failed"),
+      TotalProcessed=sum(IndicatorsProcessed),
+      TotalCreated=sum(IndicatorsCreated),
+      TotalFailed=sum(IndicatorsFailed),
+      AvgDurationMs=avg(DurationMs)
+    by CollectionID
+  | extend SuccessRate = round(100.0 * SuccessRuns / TotalRuns, 1)
+  | order by FailedRuns desc
