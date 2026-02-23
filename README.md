@@ -2,6 +2,8 @@
 
 Imports STIX threat intelligence indicators from SOCRadar TAXII 2.1 server into Microsoft Sentinel.
 
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Forcunsami%2FSOCRadar-Azure-TAXII21%2Fmaster%2Fazuredeploy.json)
+
 ## Prerequisites
 
 - Microsoft Sentinel workspace
