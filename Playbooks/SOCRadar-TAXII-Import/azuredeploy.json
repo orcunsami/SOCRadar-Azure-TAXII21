@@ -1,6 +1,6 @@
 {
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-    "contentVersion": "1.0.0",
+    "contentVersion": "1.0.0.0",
     "metadata": {
         "title": "SOCRadar-TAXII-Import",
         "description": "TAXII 2.1 threat intelligence ingestion with hybrid Logic App + Azure Function architecture. Fetches STIX indicators from SOCRadar TAXII server, parses them via Azure Function, and uploads to Microsoft Sentinel TI.",
@@ -205,15 +205,15 @@
                         }
                     },
                     "actions": {
-                        "Build_Auth_Header": {
+                        "Record_Start_Time": {
                             "type": "Compose",
-                            "inputs": "@concat('Basic ', base64(concat(parameters('TAXIIUsername'), ':', parameters('TAXIIPassword'))))",
+                            "inputs": "@ticks(utcNow())",
                             "runAfter": {}
                         },
                         "Initialize_RunId": {
                             "type": "Compose",
                             "inputs": "@guid()",
-                            "runAfter": { "Build_Auth_Header": ["Succeeded"] }
+                            "runAfter": { "Record_Start_Time": ["Succeeded"] }
                         },
                         "Initialize_PageCount": {
                             "type": "InitializeVariable",
@@ -254,7 +254,8 @@
                                     "Accept": "application/json;odata=noreplace",
                                     "x-ms-version": "2020-12-06"
                                 },
-                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com" }
+                                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com" },
+                                "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT5S", "maximumInterval": "PT1M" }
                             },
                             "runAfter": { "Initialize_IndicatorsFailed": ["Succeeded"] }
                         },
@@ -293,7 +294,7 @@
                                         "uri": "@outputs('Build_TAXII_URL')",
                                         "headers": {
                                             "Accept": "application/taxii+json;version=2.1",
-                                            "Authorization": "@outputs('Build_Auth_Header')"
+                                            "Authorization": "@concat('Basic ', base64(concat(parameters('TAXIIUsername'), ':', parameters('TAXIIPassword'))))"
                                         },
                                         "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT10S", "maximumInterval": "PT5M" }
                                     },
@@ -313,8 +314,10 @@
                                                 "body": {
                                                     "objects": "@body('Fetch_TAXII_Page')?['objects']",
                                                     "collectionId": "@parameters('CollectionId')"
-                                                }
+                                                },
+                                                "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT15S", "maximumInterval": "PT2M" }
                                             },
+                                            "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
                                             "runAfter": {}
                                         },
                                         "For_Each_Indicator": {
@@ -404,7 +407,8 @@
                                                     "AddedAfter": "@{utcNow()}",
                                                     "LastRun": "@{utcNow()}",
                                                     "Status": "running"
-                                                }
+                                                },
+                                                "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT5S", "maximumInterval": "PT1M" }
                                             },
                                             "runAfter": { "For_Each_Indicator": ["Succeeded", "Failed"], "For_Each_Revoked": ["Succeeded", "Failed", "Skipped"] }
                                         },
@@ -457,7 +461,8 @@
                                     "LastRun": "@{utcNow()}",
                                     "Status": "idle",
                                     "PageCount": "@{variables('page_count')}"
-                                }
+                                },
+                                "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT5S", "maximumInterval": "PT1M" }
                             },
                             "runAfter": { "Pagination_Loop": ["Succeeded", "Failed"] }
                         },
@@ -472,24 +477,25 @@
                                         "uri": "@{concat(parameters('AuditDcrEndpoint'), '/dataCollectionRules/', parameters('AuditDcrImmutableId'), '/streams/', parameters('AuditStreamName'), '?api-version=2023-01-01')}",
                                         "headers": { "Content-Type": "application/json" },
                                         "authentication": { "type": "ManagedServiceIdentity", "audience": "https://monitor.azure.com" },
+                                        "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT5S", "maximumInterval": "PT1M" },
                                         "body": [{
                                             "TimeGenerated": "@{utcNow()}",
                                             "CollectionID": "@{parameters('CollectionId')}",
                                             "RunID": "@{outputs('Initialize_RunId')}",
                                             "IndicatorsProcessed": "@{variables('page_count')}",
-                                            "IndicatorsCreated": 0,
-                                            "IndicatorsFailed": 0,
+                                            "IndicatorsCreated": "@{variables('indicators_created')}",
+                                            "IndicatorsFailed": "@{variables('indicators_failed')}",
                                             "PagesFetched": "@{variables('page_count')}",
-                                            "DurationMs": 0,
-                                            "Status": "@{if(equals(result('Pagination_Loop')?[0]?['status'], 'Failed'), 'Failed', 'Success')}",
-                                            "ErrorMessage": ""
+                                            "DurationMs": "@{div(sub(ticks(utcNow()), outputs('Record_Start_Time')), 10000)}",
+                                            "Status": "@{if(equals(actions('Pagination_Loop')['status'], 'Failed'), 'Failed', 'Success')}",
+                                            "ErrorMessage": "@{if(equals(actions('Pagination_Loop')['status'], 'Failed'), coalesce(actions('Pagination_Loop')?['error']?['message'], 'Pagination loop failed'), '')}"
                                         }]
                                     },
                                     "runAfter": {}
                                 }
                             },
                             "else": { "actions": {} },
-                            "runAfter": { "Update_Final_State": ["Succeeded"] }
+                            "runAfter": { "Update_Final_State": ["Succeeded", "Failed"] }
                         }
                     }
                 },
@@ -537,6 +543,18 @@
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('StorageTableDataContributorRoleId'))]",
                 "principalId": "[reference(resourceId('Microsoft.Logic/workflows', parameters('PlaybookName')), '2019-05-01', 'Full').identity.principalId]",
                 "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "apiVersion": "2021-05-01-preview",
+            "scope": "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]",
+            "name": "[concat(parameters('PlaybookName'), '-diagnostics')]",
+            "dependsOn": ["[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]"],
+            "properties": {
+                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
+                "logs": [{ "categoryGroup": "allLogs", "enabled": true }],
+                "metrics": [{ "category": "AllMetrics", "enabled": true }]
             }
         }
     ],
