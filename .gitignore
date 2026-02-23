@@ -11,3 +11,7 @@ Thumbs.db
 .idea/
 local.settings.json
 potential-app-taxii21.txt
+scripts/
+docs/
+Seperate-Repo/
+Solution/
