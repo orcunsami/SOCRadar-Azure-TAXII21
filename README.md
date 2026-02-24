@@ -7,7 +7,7 @@ Imports STIX threat intelligence indicators from SOCRadar TAXII 2.1 server into 
 ## Prerequisites
 
 - Microsoft Sentinel workspace
-- SOCRadar TAXII credentials (username + password)
+- SOCRadar TAXII credentials (Company ID + Platform API Key)
 
 ## Configuration
 
@@ -17,8 +17,8 @@ Imports STIX threat intelligence indicators from SOCRadar TAXII 2.1 server into 
 |-----------|-------------|
 | `WorkspaceName` | Your Sentinel workspace name |
 | `TAXIIServerURL` | SOCRadar TAXII server URL |
-| `TAXIIUsername` | TAXII authentication username |
-| `TAXIIPassword` | TAXII authentication password |
+| `TAXIIUsername` | SOCRadar Company ID |
+| `TAXIIPassword` | SOCRadar Platform API Key |
 | `CollectionId` | TAXII collection ID |
 
 ### Optional Parameters
