@@ -1,53 +1,68 @@
 # SOCRadar TAXII 2.1 for Microsoft Sentinel
 
-Imports STIX threat intelligence indicators from SOCRadar TAXII 2.1 server into Microsoft Sentinel.
+Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel.
+
+## Deployment
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Forcunsami%2FSOCRadar-Azure-TAXII21%2Fmaster%2Fazuredeploy.json)
 
-## Prerequisites
+Click the button above. Fill in the parameters and click **Create**. The function app and code are deployed automatically.
 
-- Microsoft Sentinel workspace
-- SOCRadar TAXII credentials (Company ID + Platform API Key)
+Or via CLI:
 
-## Configuration
+```bash
+az deployment group create \
+  --resource-group <YOUR_RG> \
+  --template-file azuredeploy.json \
+  --parameters \
+    WorkspaceName=<YOUR_WORKSPACE> \
+    TAXIIServerURL=https://taxii2.socradar.com/radar_alpha \
+    TAXIIUsername=<COMPANY_ID> \
+    TAXIIPassword=<API_KEY> \
+    CollectionId=<COLLECTION_UUID>
+```
 
-### Required Parameters
+## Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `WorkspaceName` | Your Sentinel workspace name |
-| `TAXIIServerURL` | SOCRadar TAXII server URL |
-| `TAXIIUsername` | SOCRadar Company ID |
-| `TAXIIPassword` | SOCRadar Platform API Key |
-| `CollectionId` | TAXII collection ID |
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
+| `TAXIIServerURL` | Yes | - | TAXII server URL with API root |
+| `TAXIIUsername` | Yes | - | SOCRadar Company ID |
+| `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
+| `CollectionId` | Yes | - | TAXII collection UUID |
+| `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
+| `MinConfidence` | No | 0 | Minimum confidence score (0-100) |
+| `MaxPagesPerRun` | No | 100 | Max TAXII pages per cycle |
+| `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
 
-### Optional Parameters
+## SOCRadar TAXII API Roots
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `PollingIntervalMinutes` | 15 | How often to poll for new indicators |
-| `MinConfidence` | 0 | Minimum confidence score (0-100) |
-| `MaxPagesPerRun` | 100 | Maximum TAXII pages per polling cycle |
-| `EnableAuditLogging` | false | Log operations to Log Analytics |
+| API Root | URL | Collection UUID |
+|----------|-----|-----------------|
+| Alpha | `https://taxii2.socradar.com/radar_alpha` | `fd3fec42-efee-4353-85b2-cb87f9acc4ef` |
+| Gamma | `https://taxii2.socradar.com/radar_gamma` | `f260cf45-85ef-4f86-9542-763061f11d50` |
+| Premium | `https://taxii2.socradar.com/radar_premium` | `cfcf66c0-3226-561e-a9d9-b54addca5dd1` |
+
+Contact SOCRadar for your API root and collection details.
 
 ## What Gets Deployed
 
-- **SOCRadar-TAXII-Import** - Logic App that polls TAXII server and imports indicators
-- **Azure Function (ParseSTIXIndicators)** - Parses STIX bundles into Sentinel TI format
-- **Storage Account** - Checkpoint state for pagination
-- **SOCRadar-TAXII-Infrastructure** - Audit logging infrastructure (optional)
+- **Azure Function App** (Python 3.11, Consumption plan) - Polls TAXII server on schedule
+- **Storage Account** - Checkpoint state for cursor-based pagination
+- **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL
 
 ## Key Features
 
 - STIX 2.1 indicator parsing (IP, domain, URL, file hash, email)
-- Stateful pagination with checkpoint storage
-- Indicator revocation support
-- Exponential backoff retry on transient failures
+- Cursor-based pagination with checkpoint storage
+- Batch upload to Sentinel TI (100 indicators/batch)
 - Confidence score filtering
+- Managed Identity authentication (no stored credentials for Azure)
 
 ## Post-Deployment
 
-Logic App starts 3 minutes after deployment to allow Azure role propagation.
+Function polls on the configured schedule. First run processes all available indicators from the TAXII collection. Subsequent runs continue from the saved cursor position.
 
 ## About SOCRadar
 
