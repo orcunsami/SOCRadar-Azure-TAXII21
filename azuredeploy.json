@@ -22,10 +22,16 @@
                 "description": "Location/region of the Log Analytics workspace"
             }
         },
-        "TAXIIServerURL": {
+        "ApiRoots": {
             "type": "string",
             "metadata": {
-                "description": "SOCRadar TAXII 2.1 server URL including API root (e.g., https://taxii2.socradar.com/radar_alpha)"
+                "description": "Comma-separated SOCRadar TAXII API root names (e.g., radar_alpha,radar_gamma)"
+            }
+        },
+        "CollectionIds": {
+            "type": "string",
+            "metadata": {
+                "description": "Comma-separated TAXII collection UUIDs matching API roots order (e.g., fd3fec42-...,f260cf45-...)"
             }
         },
         "TAXIIUsername": {
@@ -38,12 +44,6 @@
             "type": "securestring",
             "metadata": {
                 "description": "TAXII server password (SOCRadar Platform API Key)"
-            }
-        },
-        "CollectionId": {
-            "type": "string",
-            "metadata": {
-                "description": "TAXII collection UUID"
             }
         },
         "PollingIntervalMinutes": {
@@ -193,6 +193,8 @@
                     "name": "[variables('AuditTableName')]",
                     "columns": [
                         { "name": "TimeGenerated", "type": "datetime", "description": "Event timestamp" },
+                        { "name": "ApiRoot", "type": "string", "description": "TAXII API root name" },
+                        { "name": "CollectionId", "type": "string", "description": "TAXII collection UUID" },
                         { "name": "IndicatorsCreated", "type": "int", "description": "Indicators successfully uploaded" },
                         { "name": "IndicatorsSkipped", "type": "int", "description": "Indicators skipped" },
                         { "name": "IndicatorsRevoked", "type": "int", "description": "Revoked indicators encountered" },
@@ -224,6 +226,8 @@
                     "[variables('AuditStreamName')]": {
                         "columns": [
                             { "name": "TimeGenerated", "type": "datetime" },
+                            { "name": "ApiRoot", "type": "string" },
+                            { "name": "CollectionId", "type": "string" },
                             { "name": "IndicatorsCreated", "type": "int" },
                             { "name": "IndicatorsSkipped", "type": "int" },
                             { "name": "IndicatorsRevoked", "type": "int" },
@@ -356,8 +360,12 @@
                             "value": "[variables('pollingSchedule')]"
                         },
                         {
-                            "name": "TAXII_SERVER_URL",
-                            "value": "[parameters('TAXIIServerURL')]"
+                            "name": "API_ROOTS",
+                            "value": "[parameters('ApiRoots')]"
+                        },
+                        {
+                            "name": "COLLECTION_IDS",
+                            "value": "[parameters('CollectionIds')]"
                         },
                         {
                             "name": "TAXII_USERNAME",
@@ -366,10 +374,6 @@
                         {
                             "name": "TAXII_PASSWORD",
                             "value": "[parameters('TAXIIPassword')]"
-                        },
-                        {
-                            "name": "COLLECTION_ID",
-                            "value": "[parameters('CollectionId')]"
                         },
                         {
                             "name": "MIN_CONFIDENCE",

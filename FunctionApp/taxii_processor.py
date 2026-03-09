@@ -3,20 +3,17 @@ SOCRadar TAXII 2.1 Processor
 Fetches STIX indicators from TAXII server, uploads to Microsoft Sentinel TI in batches.
 """
 
-import os
 import logging
 from datetime import datetime, timezone
 from typing import List, Tuple
 
 import requests
-from azure.identity import DefaultAzureCredential
-from azure.data.tables import TableServiceClient
 
 from stix_parser import prepare_for_sentinel
-from dcr_logger import DcrLogger
 
 logger = logging.getLogger(__name__)
 
+TAXII_BASE_URL = "https://taxii2.socradar.com"
 SENTINEL_UPLOAD_URL = "https://sentinelus.azure-api.net/workspaces/{workspace_id}/threatintelligenceindicators:upload"
 BATCH_SIZE = 100
 PAGE_LIMIT = 100
@@ -24,42 +21,21 @@ PAGE_LIMIT = 100
 
 class TaxiiProcessor:
 
-    def __init__(self, config: dict):
-        self.taxii_server_url = config["taxii_server_url"].rstrip("/")
-        self.taxii_username = config["taxii_username"]
-        self.taxii_password = config["taxii_password"]
-        self.collection_id = config["collection_id"]
-        self.min_confidence = config.get("min_confidence", 0)
-        self.max_pages = config.get("max_pages", 100)
-        self.workspace_id = config["workspace_id"]
-        self.storage_account_name = config["storage_account_name"]
-        self.enable_audit_logging = config.get("enable_audit_logging", False)
+    def __init__(self, api_root, collection_id, taxii_username, taxii_password,
+                 workspace_id, min_confidence=0, max_pages=100,
+                 credential=None, table_client=None, dcr_logger=None):
+        self.api_root = api_root
+        self.collection_id = collection_id
+        self.taxii_username = taxii_username
+        self.taxii_password = taxii_password
+        self.workspace_id = workspace_id
+        self.min_confidence = min_confidence
+        self.max_pages = max_pages
 
-        self.credential = DefaultAzureCredential()
+        self.credential = credential
+        self.table_client = table_client
+        self.dcr_logger = dcr_logger
         self._mgmt_token = None
-
-        table_url = "https://{}.table.core.windows.net".format(self.storage_account_name)
-        self.table_client = TableServiceClient(
-            endpoint=table_url, credential=self.credential
-        ).get_table_client("TAXIIState")
-
-        self.dcr_logger = None
-        if self.enable_audit_logging:
-            self.dcr_logger = DcrLogger.from_env(self.credential)
-
-    @classmethod
-    def from_env(cls) -> "TaxiiProcessor":
-        return cls({
-            "taxii_server_url": os.environ["TAXII_SERVER_URL"],
-            "taxii_username": os.environ["TAXII_USERNAME"],
-            "taxii_password": os.environ["TAXII_PASSWORD"],
-            "collection_id": os.environ["COLLECTION_ID"],
-            "min_confidence": int(os.environ.get("MIN_CONFIDENCE", "0")),
-            "max_pages": int(os.environ.get("MAX_PAGES", "100")),
-            "workspace_id": os.environ["WORKSPACE_ID"],
-            "storage_account_name": os.environ["STORAGE_ACCOUNT_NAME"],
-            "enable_audit_logging": os.environ.get("ENABLE_AUDIT_LOGGING", "true").lower() == "true",
-        })
 
     def _get_mgmt_token(self) -> str:
         if not self._mgmt_token:
@@ -67,9 +43,14 @@ class TaxiiProcessor:
             self._mgmt_token = token.token
         return self._mgmt_token
 
+    def _checkpoint_key(self) -> str:
+        return "{}_{}".format(self.api_root, self.collection_id)
+
     def fetch_page(self, added_after=None, cursor=None) -> dict:
         """Fetch one page from TAXII 2.1 server."""
-        url = "{}/collections/{}/objects/".format(self.taxii_server_url, self.collection_id)
+        url = "{}/{}/collections/{}/objects/".format(
+            TAXII_BASE_URL, self.api_root, self.collection_id
+        )
         params = {"limit": PAGE_LIMIT}
 
         if cursor:
@@ -96,7 +77,7 @@ class TaxiiProcessor:
         """Get saved cursor and added_after from Azure Table Storage."""
         try:
             entity = self.table_client.get_entity(
-                partition_key=self.collection_id, row_key="state"
+                partition_key=self._checkpoint_key(), row_key="state"
             )
             return {
                 "cursor": entity.get("Cursor", ""),
@@ -109,7 +90,7 @@ class TaxiiProcessor:
         """Save pagination state to Azure Table Storage."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         entity = {
-            "PartitionKey": self.collection_id,
+            "PartitionKey": self._checkpoint_key(),
             "RowKey": "state",
             "Cursor": cursor or "",
             "AddedAfter": added_after,
@@ -142,15 +123,15 @@ class TaxiiProcessor:
             skipped = len(errors)
             created = len(indicators) - skipped
             if errors:
-                logger.warning("Step 2.5: Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
+                logger.warning("Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
             return created, skipped
         else:
-            logger.error("Step 2.5: Upload failed: %d %s", resp.status_code, resp.text[:500])
+            logger.error("Upload failed: %d %s", resp.status_code, resp.text[:500])
             return 0, len(indicators)
 
     def run(self) -> dict:
         """Main loop: fetch TAXII pages, filter indicators, upload to Sentinel."""
-        logger.info("Step 2.1: Loading checkpoint")
+        logger.info("Loading checkpoint for %s / %s", self.api_root, self.collection_id)
         checkpoint = self.get_checkpoint()
         cursor = checkpoint["cursor"]
         added_after = checkpoint["added_after"]
@@ -163,7 +144,8 @@ class TaxiiProcessor:
         type_stats = {}
 
         logger.info(
-            "Step 2.2: Starting fetch - collection=%s, cursor=%s, added_after=%s%s",
+            "Starting fetch - %s/%s, cursor=%s, added_after=%s%s",
+            self.api_root,
             self.collection_id,
             cursor[:30] if cursor else "NONE",
             added_after,
@@ -181,11 +163,11 @@ class TaxiiProcessor:
             next_cursor = data.get("next", "")
             pages_fetched += 1
 
-            logger.info("Step 2.3: Page %d/%d: %d objects, more=%s",
+            logger.info("Page %d/%d: %d objects, more=%s",
                         page_num, self.max_pages, len(objects), more)
 
             if not objects:
-                logger.info("Step 2.3: Page %d empty, stopping", page_num)
+                logger.info("Page %d empty, stopping", page_num)
                 break
 
             # Filter and prepare indicators
@@ -213,7 +195,7 @@ class TaxiiProcessor:
 
                 indicators.append(prepared)
 
-            logger.info("Step 2.4: Page %d filtered: %d to upload, %d revoked, %d below confidence",
+            logger.info("Page %d filtered: %d to upload, %d revoked, %d below confidence",
                         page_num, len(indicators), page_revoked, page_skipped)
 
             # Batch upload
@@ -221,12 +203,12 @@ class TaxiiProcessor:
             for i in range(0, len(indicators), BATCH_SIZE):
                 batch = indicators[i:i + BATCH_SIZE]
                 batch_num = (i // BATCH_SIZE) + 1
-                logger.info("Step 2.5: Uploading batch %d/%d (%d indicators)",
+                logger.info("Uploading batch %d/%d (%d indicators)",
                             batch_num, total_batches, len(batch))
                 created, skipped = self.upload_batch(batch)
                 total_created += created
                 total_skipped += skipped
-                logger.info("Step 2.5: Batch %d result: %d created, %d skipped",
+                logger.info("Batch %d result: %d created, %d skipped",
                             batch_num, created, skipped)
 
             # Update cursor
@@ -235,25 +217,24 @@ class TaxiiProcessor:
 
             # Save checkpoint after each page for crash resilience
             self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
-            logger.info("Step 2.6: Checkpoint saved after page %d", page_num)
+            logger.info("Checkpoint saved after page %d", page_num)
 
             if not more:
-                logger.info("Step 2.6: No more pages, stopping")
+                logger.info("No more pages, stopping")
                 break
 
         logger.info(
-            "Step 2.7: Fetch complete - %d created, %d skipped, %d revoked, %d pages, types=%s",
+            "Fetch complete for %s/%s - %d created, %d skipped, %d revoked, %d pages, types=%s",
+            self.api_root, self.collection_id,
             total_created, total_skipped, total_revoked, pages_fetched, type_stats
         )
 
         return {
+            "api_root": self.api_root,
+            "collection_id": self.collection_id,
             "indicators_created": total_created,
             "indicators_skipped": total_skipped,
             "indicators_revoked": total_revoked,
             "pages_fetched": pages_fetched,
             "type_stats": type_stats,
         }
-
-    def log_audit(self, **kwargs):
-        if self.enable_audit_logging and self.dcr_logger:
-            self.dcr_logger.log_audit(kwargs)

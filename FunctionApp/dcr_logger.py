@@ -53,6 +53,8 @@ class DcrLogger:
     def log_audit(self, data):
         record = {
             "TimeGenerated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "ApiRoot": data.get("api_root", ""),
+            "CollectionId": data.get("collection_id", ""),
             "IndicatorsCreated": data.get("indicators_created", 0),
             "IndicatorsSkipped": data.get("indicators_skipped", 0),
             "IndicatorsRevoked": data.get("indicators_revoked", 0),
