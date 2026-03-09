@@ -1,6 +1,6 @@
 # SOCRadar TAXII 2.1 for Microsoft Sentinel
 
-Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel.
+Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel. Supports multiple API roots and collections in a single deployment.
 
 ## Deployment
 
@@ -16,10 +16,10 @@ az deployment group create \
   --template-file azuredeploy.json \
   --parameters \
     WorkspaceName=<YOUR_WORKSPACE> \
-    TAXIIServerURL=https://taxii2.socradar.com/radar_alpha \
+    ApiRoots=radar_alpha,radar_gamma \
+    CollectionIds=fd3fec42-efee-4353-85b2-cb87f9acc4ef,f260cf45-85ef-4f86-9542-763061f11d50 \
     TAXIIUsername=<COMPANY_ID> \
-    TAXIIPassword=<API_KEY> \
-    CollectionId=<COLLECTION_UUID>
+    TAXIIPassword=<API_KEY>
 ```
 
 ## Parameters
@@ -27,22 +27,24 @@ az deployment group create \
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
-| `TAXIIServerURL` | Yes | - | TAXII server URL with API root |
+| `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
+| `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
 | `TAXIIUsername` | Yes | - | SOCRadar Company ID |
 | `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
-| `CollectionId` | Yes | - | TAXII collection UUID |
 | `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
 | `MinConfidence` | No | 0 | Minimum confidence score (0-100) |
-| `MaxPagesPerRun` | No | 100 | Max TAXII pages per cycle |
+| `MaxPagesPerRun` | No | 100 | Max TAXII pages per cycle per collection |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
+
+Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
 
 ## SOCRadar TAXII API Roots
 
-| API Root | URL | Collection UUID |
-|----------|-----|-----------------|
-| Alpha | `https://taxii2.socradar.com/radar_alpha` | `fd3fec42-efee-4353-85b2-cb87f9acc4ef` |
-| Gamma | `https://taxii2.socradar.com/radar_gamma` | `f260cf45-85ef-4f86-9542-763061f11d50` |
-| Premium | `https://taxii2.socradar.com/radar_premium` | `cfcf66c0-3226-561e-a9d9-b54addca5dd1` |
+| API Root | Collection UUID |
+|----------|-----------------|
+| `radar_alpha` | `fd3fec42-efee-4353-85b2-cb87f9acc4ef` |
+| `radar_gamma` | `f260cf45-85ef-4f86-9542-763061f11d50` |
+| `radar_premium` | `cfcf66c0-3226-561e-a9d9-b54addca5dd1` |
 
 Contact SOCRadar for your API root and collection details.
 
@@ -50,23 +52,25 @@ Contact SOCRadar for your API root and collection details.
 
 - **Azure Function App** (Python 3.11, Consumption plan) - Polls TAXII server on schedule
 - **Application Insights** - Monitoring with step-by-step logging (workspace-based, 30 day retention)
-- **Storage Account** - Checkpoint state for cursor-based pagination
+- **Storage Account** - Checkpoint state per collection for cursor-based pagination
 - **User-Assigned Managed Identity** - Secure access to Microsoft Sentinel and Storage
-- **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL
+- **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL with per-collection entries
 - **Deployment Script** - Automatically triggers first import after deployment
 
 ## Key Features
 
+- Multi-collection support (multiple API roots in one deployment)
 - STIX 2.1 indicator parsing (IP, domain, URL, file hash, email)
-- Cursor-based pagination with checkpoint storage
+- Cursor-based pagination with per-collection checkpoint storage
 - Batch upload to Microsoft Sentinel TI (100 indicators/batch)
 - Confidence score filtering
+- Per-collection error handling (one failure doesn't stop others)
 - Managed Identity authentication (no stored credentials for Azure)
 - Automatic first run after deployment
 
 ## Post-Deployment
 
-The function automatically runs after deployment via a deployment script. Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication).
+The function automatically runs after deployment via a deployment script. Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication per collection).
 
 ### Monitoring Logs
 
@@ -83,7 +87,7 @@ traces
 | order by timestamp desc
 ```
 
-Each run logs step-by-step progress (Step 1: init, Step 2: fetch pages, Step 3: complete, Step 4: audit).
+Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-collection fetch, Step 3: complete).
 
 ## About SOCRadar
 
