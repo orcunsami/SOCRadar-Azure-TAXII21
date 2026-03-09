@@ -49,20 +49,41 @@ Contact SOCRadar for your API root and collection details.
 ## What Gets Deployed
 
 - **Azure Function App** (Python 3.11, Consumption plan) - Polls TAXII server on schedule
+- **Application Insights** - Monitoring with step-by-step logging (workspace-based, 30 day retention)
 - **Storage Account** - Checkpoint state for cursor-based pagination
+- **User-Assigned Managed Identity** - Secure access to Microsoft Sentinel and Storage
 - **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL
+- **Deployment Script** - Automatically triggers first import after deployment
 
 ## Key Features
 
 - STIX 2.1 indicator parsing (IP, domain, URL, file hash, email)
 - Cursor-based pagination with checkpoint storage
-- Batch upload to Sentinel TI (100 indicators/batch)
+- Batch upload to Microsoft Sentinel TI (100 indicators/batch)
 - Confidence score filtering
 - Managed Identity authentication (no stored credentials for Azure)
+- Automatic first run after deployment
 
 ## Post-Deployment
 
-Function polls on the configured schedule. First run processes all available indicators from the TAXII collection. Subsequent runs continue from the saved cursor position.
+The function automatically runs after deployment via a deployment script. Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication).
+
+### Monitoring Logs
+
+To view real-time execution logs:
+
+1. Go to your **Function App** in Azure Portal
+2. Navigate to **Monitoring > Log stream** for real-time logs
+3. Or go to **Application Insights > Logs** and run:
+
+```kql
+traces
+| where timestamp > ago(1h)
+| where message has "Step"
+| order by timestamp desc
+```
+
+Each run logs step-by-step progress (Step 1: init, Step 2: fetch pages, Step 3: complete, Step 4: audit).
 
 ## About SOCRadar
 
