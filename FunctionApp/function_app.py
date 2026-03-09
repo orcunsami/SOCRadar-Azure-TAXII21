@@ -62,12 +62,9 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
     taxii_username = os.environ["TAXII_USERNAME"]
     taxii_password = os.environ["TAXII_PASSWORD"]
     workspace_id = os.environ["WORKSPACE_ID"]
-    min_confidence = int(os.environ.get("MIN_CONFIDENCE", "0"))
-    max_pages = int(os.environ.get("MAX_PAGES", "100"))
 
     # Aggregate totals
     total_created = 0
-    total_skipped = 0
     total_revoked = 0
     total_pages = 0
     collections_succeeded = 0
@@ -85,8 +82,6 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                 taxii_username=taxii_username,
                 taxii_password=taxii_password,
                 workspace_id=workspace_id,
-                min_confidence=min_confidence,
-                max_pages=max_pages,
                 credential=credential,
                 table_client=table_client,
                 dcr_logger=dcr_logger,
@@ -95,15 +90,13 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
 
             collection_ms = int((time.time() - collection_start) * 1000)
             total_created += result["indicators_created"]
-            total_skipped += result["indicators_skipped"]
             total_revoked += result["indicators_revoked"]
             total_pages += result["pages_fetched"]
             collections_succeeded += 1
 
-            logger.info("Step 2: %s/%s done - %d created, %d skipped, %dms",
+            logger.info("Step 2: %s/%s done - %d created, %dms",
                         api_root, collection_id[:8],
-                        result["indicators_created"], result["indicators_skipped"],
-                        collection_ms)
+                        result["indicators_created"], collection_ms)
 
             # Per-collection audit log
             if dcr_logger:
@@ -111,7 +104,6 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                     "api_root": api_root,
                     "collection_id": collection_id,
                     "indicators_created": result["indicators_created"],
-                    "indicators_skipped": result["indicators_skipped"],
                     "indicators_revoked": result["indicators_revoked"],
                     "pages_fetched": result["pages_fetched"],
                     "duration_ms": collection_ms,
@@ -134,7 +126,6 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                         "api_root": api_root,
                         "collection_id": collection_id,
                         "indicators_created": 0,
-                        "indicators_skipped": 0,
                         "indicators_revoked": 0,
                         "pages_fetched": 0,
                         "duration_ms": collection_ms,
@@ -147,9 +138,9 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
     elapsed_ms = int((time.time() - start_time) * 1000)
 
     logger.info(
-        "Step 3: Import complete - %d created, %d skipped, %d revoked, %d pages, "
+        "Step 3: Import complete - %d created, %d revoked, %d pages, "
         "%d/%d collections succeeded, %dms",
-        total_created, total_skipped, total_revoked, total_pages,
+        total_created, total_revoked, total_pages,
         collections_succeeded, len(api_roots), elapsed_ms
     )
 

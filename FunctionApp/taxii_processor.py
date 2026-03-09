@@ -22,15 +22,12 @@ PAGE_LIMIT = 100
 class TaxiiProcessor:
 
     def __init__(self, api_root, collection_id, taxii_username, taxii_password,
-                 workspace_id, min_confidence=0, max_pages=100,
-                 credential=None, table_client=None, dcr_logger=None):
+                 workspace_id, credential=None, table_client=None, dcr_logger=None):
         self.api_root = api_root
         self.collection_id = collection_id
         self.taxii_username = taxii_username
         self.taxii_password = taxii_password
         self.workspace_id = workspace_id
-        self.min_confidence = min_confidence
-        self.max_pages = max_pages
 
         self.credential = credential
         self.table_client = table_client
@@ -138,7 +135,6 @@ class TaxiiProcessor:
         is_first_run = added_after == "1970-01-01T00:00:00Z" and not cursor
 
         total_created = 0
-        total_skipped = 0
         total_revoked = 0
         pages_fetched = 0
         type_stats = {}
@@ -152,7 +148,9 @@ class TaxiiProcessor:
             " (first run)" if is_first_run else ""
         )
 
-        for page_num in range(1, self.max_pages + 1):
+        page_num = 0
+        while True:
+            page_num += 1
             if cursor:
                 data = self.fetch_page(cursor=cursor)
             else:
@@ -163,8 +161,8 @@ class TaxiiProcessor:
             next_cursor = data.get("next", "")
             pages_fetched += 1
 
-            logger.info("Page %d/%d: %d objects, more=%s",
-                        page_num, self.max_pages, len(objects), more)
+            logger.info("Page %d: %d objects, more=%s",
+                        page_num, len(objects), more)
 
             if not objects:
                 logger.info("Page %d empty, stopping", page_num)
@@ -173,7 +171,6 @@ class TaxiiProcessor:
             # Filter and prepare indicators
             indicators = []
             page_revoked = 0
-            page_skipped = 0
             for obj in objects:
                 obj_type = obj.get("type", "unknown")
                 type_stats[obj_type] = type_stats.get(obj_type, 0) + 1
@@ -187,16 +184,10 @@ class TaxiiProcessor:
                 if not prepared:
                     continue
 
-                confidence = prepared.get("confidence", 0)
-                if isinstance(confidence, (int, float)) and confidence < self.min_confidence:
-                    total_skipped += 1
-                    page_skipped += 1
-                    continue
-
                 indicators.append(prepared)
 
-            logger.info("Page %d filtered: %d to upload, %d revoked, %d below confidence",
-                        page_num, len(indicators), page_revoked, page_skipped)
+            logger.info("Page %d filtered: %d to upload, %d revoked",
+                        page_num, len(indicators), page_revoked)
 
             # Batch upload
             total_batches = (len(indicators) + BATCH_SIZE - 1) // BATCH_SIZE if indicators else 0
@@ -207,7 +198,6 @@ class TaxiiProcessor:
                             batch_num, total_batches, len(batch))
                 created, skipped = self.upload_batch(batch)
                 total_created += created
-                total_skipped += skipped
                 logger.info("Batch %d result: %d created, %d skipped",
                             batch_num, created, skipped)
 
@@ -224,16 +214,15 @@ class TaxiiProcessor:
                 break
 
         logger.info(
-            "Fetch complete for %s/%s - %d created, %d skipped, %d revoked, %d pages, types=%s",
+            "Fetch complete for %s/%s - %d created, %d revoked, %d pages, types=%s",
             self.api_root, self.collection_id,
-            total_created, total_skipped, total_revoked, pages_fetched, type_stats
+            total_created, total_revoked, pages_fetched, type_stats
         )
 
         return {
             "api_root": self.api_root,
             "collection_id": self.collection_id,
             "indicators_created": total_created,
-            "indicators_skipped": total_skipped,
             "indicators_revoked": total_revoked,
             "pages_fetched": pages_fetched,
             "type_stats": type_stats,

@@ -3,7 +3,7 @@
     "contentVersion": "1.0.0.0",
     "metadata": {
         "title": "SOCRadar TAXII 2.1 for Microsoft Sentinel",
-        "description": "Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel using Azure Functions. Supports cursor-based pagination, checkpoint/resume, confidence filtering, and batch upload.",
+        "description": "Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel using Azure Functions. Supports multiple collections, cursor-based pagination, checkpoint/resume, and batch upload.",
         "version": "1.0.0",
         "author": "SOCRadar",
         "lastUpdateTime": "2026-03-08T00:00:00.000Z"
@@ -53,24 +53,6 @@
             "maxValue": 1440,
             "metadata": {
                 "description": "How often to poll TAXII server (5-1440 minutes)"
-            }
-        },
-        "MinConfidence": {
-            "type": "int",
-            "defaultValue": 0,
-            "minValue": 0,
-            "maxValue": 100,
-            "metadata": {
-                "description": "Minimum confidence score to import (0-100)"
-            }
-        },
-        "MaxPagesPerRun": {
-            "type": "int",
-            "defaultValue": 100,
-            "minValue": 1,
-            "maxValue": 500,
-            "metadata": {
-                "description": "Maximum TAXII pages per polling cycle"
             }
         },
         "EnableAuditLogging": {
@@ -196,7 +178,6 @@
                         { "name": "ApiRoot", "type": "string", "description": "TAXII API root name" },
                         { "name": "CollectionId", "type": "string", "description": "TAXII collection UUID" },
                         { "name": "IndicatorsCreated", "type": "int", "description": "Indicators successfully uploaded" },
-                        { "name": "IndicatorsSkipped", "type": "int", "description": "Indicators skipped" },
                         { "name": "IndicatorsRevoked", "type": "int", "description": "Revoked indicators encountered" },
                         { "name": "PagesFetched", "type": "int", "description": "TAXII pages fetched" },
                         { "name": "DurationMs", "type": "int", "description": "Run duration in milliseconds" },
@@ -229,7 +210,6 @@
                             { "name": "ApiRoot", "type": "string" },
                             { "name": "CollectionId", "type": "string" },
                             { "name": "IndicatorsCreated", "type": "int" },
-                            { "name": "IndicatorsSkipped", "type": "int" },
                             { "name": "IndicatorsRevoked", "type": "int" },
                             { "name": "PagesFetched", "type": "int" },
                             { "name": "DurationMs", "type": "int" },
@@ -349,7 +329,7 @@
                         },
                         {
                             "name": "WEBSITE_RUN_FROM_PACKAGE",
-                            "value": "https://github.com/orcunsami/SOCRadar-Azure-TAXII21/releases/download/v1.1.0/FunctionApp.zip"
+                            "value": "https://github.com/orcunsami/SOCRadar-Azure-TAXII21/releases/download/v1.0.0/FunctionApp.zip"
                         },
                         {
                             "name": "AZURE_CLIENT_ID",
@@ -374,14 +354,6 @@
                         {
                             "name": "TAXII_PASSWORD",
                             "value": "[parameters('TAXIIPassword')]"
-                        },
-                        {
-                            "name": "MIN_CONFIDENCE",
-                            "value": "[string(parameters('MinConfidence'))]"
-                        },
-                        {
-                            "name": "MAX_PAGES",
-                            "value": "[string(parameters('MaxPagesPerRun'))]"
                         },
                         {
                             "name": "WORKSPACE_ID",
