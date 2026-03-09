@@ -32,8 +32,6 @@ az deployment group create \
 | `TAXIIUsername` | Yes | - | SOCRadar Company ID |
 | `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
 | `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
-| `MinConfidence` | No | 0 | Minimum confidence score (0-100) |
-| `MaxPagesPerRun` | No | 100 | Max TAXII pages per cycle per collection |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
 
 Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
@@ -63,7 +61,6 @@ Contact SOCRadar for your API root and collection details.
 - STIX 2.1 indicator parsing (IP, domain, URL, file hash, email)
 - Cursor-based pagination with per-collection checkpoint storage
 - Batch upload to Microsoft Sentinel TI (100 indicators/batch)
-- Confidence score filtering
 - Per-collection error handling (one failure doesn't stop others)
 - Managed Identity authentication (no stored credentials for Azure)
 - Automatic first run after deployment

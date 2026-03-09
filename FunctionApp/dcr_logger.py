@@ -56,7 +56,6 @@ class DcrLogger:
             "ApiRoot": data.get("api_root", ""),
             "CollectionId": data.get("collection_id", ""),
             "IndicatorsCreated": data.get("indicators_created", 0),
-            "IndicatorsSkipped": data.get("indicators_skipped", 0),
             "IndicatorsRevoked": data.get("indicators_revoked", 0),
             "PagesFetched": data.get("pages_fetched", 0),
             "DurationMs": data.get("duration_ms", 0),
