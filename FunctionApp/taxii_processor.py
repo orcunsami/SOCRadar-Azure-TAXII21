@@ -4,6 +4,7 @@ Fetches STIX indicators from TAXII server, uploads to Microsoft Sentinel TI in b
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Tuple
 
@@ -22,7 +23,8 @@ PAGE_LIMIT = 100
 class TaxiiProcessor:
 
     def __init__(self, api_root, collection_id, taxii_username, taxii_password,
-                 workspace_id, credential=None, table_client=None, dcr_logger=None):
+                 workspace_id, credential=None, table_client=None, dcr_logger=None,
+                 time_budget_seconds=0):
         self.api_root = api_root
         self.collection_id = collection_id
         self.taxii_username = taxii_username
@@ -32,6 +34,7 @@ class TaxiiProcessor:
         self.credential = credential
         self.table_client = table_client
         self.dcr_logger = dcr_logger
+        self.time_budget_seconds = time_budget_seconds
         self._mgmt_token = None
 
     def _get_mgmt_token(self) -> str:
@@ -138,6 +141,7 @@ class TaxiiProcessor:
         total_revoked = 0
         pages_fetched = 0
         type_stats = {}
+        run_start = time.time()
 
         logger.info(
             "Starting fetch - %s/%s, cursor=%s, added_after=%s%s",
@@ -212,6 +216,14 @@ class TaxiiProcessor:
             if not more:
                 logger.info("No more pages, stopping")
                 break
+
+            # Time budget check
+            if self.time_budget_seconds > 0:
+                elapsed = time.time() - run_start
+                if elapsed >= self.time_budget_seconds:
+                    logger.info("Time budget exhausted (%.0fs/%.0fs), pausing for next run",
+                                elapsed, self.time_budget_seconds)
+                    break
 
         logger.info(
             "Fetch complete for %s/%s - %d created, %d revoked, %d pages, types=%s",
