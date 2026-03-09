@@ -90,6 +90,8 @@
         "SentinelContributorRoleId": "ab8e14d6-4a74-4a29-9ba8-549422addade",
         "StorageTableDataContributorRoleId": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",
         "MonitoringMetricsPublisherRoleId": "3913510d-42f4-4e42-8a64-420c390055eb",
+        "WebsiteContributorRoleId": "de139f84-1756-47ae-9be6-808fbbe84772",
+        "appInsightsName": "[concat('socradar-taxii-ai-', uniqueString(resourceGroup().id))]",
         "DceName": "SOCRadar-TAXII-DCE",
         "AuditTableName": "SOCRadar_TAXII_Audit_CL",
         "AuditDcrName": "SOCRadar-TAXII-Audit-DCR",
@@ -271,6 +273,21 @@
             }
         },
         {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2020-02-02",
+            "name": "[variables('appInsightsName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "web",
+            "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]"
+            ],
+            "properties": {
+                "Application_Type": "web",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
+                "RetentionInDays": 30
+            }
+        },
+        {
             "type": "Microsoft.Web/sites",
             "apiVersion": "2023-12-01",
             "name": "[variables('functionAppName')]",
@@ -289,7 +306,8 @@
                 "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
                 "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageAccountName'), 'default', variables('tableName'))]",
                 "[resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('DceName'))]",
-                "[resourceId('Microsoft.Insights/dataCollectionRules', variables('AuditDcrName'))]"
+                "[resourceId('Microsoft.Insights/dataCollectionRules', variables('AuditDcrName'))]",
+                "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
             ],
             "properties": {
                 "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
@@ -320,6 +338,10 @@
                         {
                             "name": "AzureWebJobsFeatureFlags",
                             "value": "EnableWorkerIndexing"
+                        },
+                        {
+                            "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                            "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
                         },
                         {
                             "name": "WEBSITE_RUN_FROM_PACKAGE",
@@ -427,6 +449,54 @@
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('MonitoringMetricsPublisherRoleId'))]",
                 "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
                 "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('managedIdentityName'), variables('WebsiteContributorRoleId'))]",
+            "scope": "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
+                "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('WebsiteContributorRoleId'))]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deploymentScripts",
+            "apiVersion": "2020-10-01",
+            "name": "triggerFirstRun",
+            "location": "[resourceGroup().location]",
+            "kind": "AzureCLI",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]": {}
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+                "[guid(resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('managedIdentityName'), variables('WebsiteContributorRoleId'))]"
+            ],
+            "properties": {
+                "azCliVersion": "2.50.0",
+                "retentionInterval": "PT1H",
+                "timeout": "PT5M",
+                "scriptContent": "sleep 30 && az functionapp restart --name $FA_NAME --resource-group $RG_NAME && echo 'Function App restarted, run_on_startup will trigger first import'",
+                "environmentVariables": [
+                    {
+                        "name": "FA_NAME",
+                        "value": "[variables('functionAppName')]"
+                    },
+                    {
+                        "name": "RG_NAME",
+                        "value": "[resourceGroup().name]"
+                    }
+                ]
             }
         }
     ],
