@@ -98,6 +98,22 @@ traces
 
 Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-collection fetch, Step 3: complete).
 
+### Where Data Appears
+
+**Threat Intelligence indicators** are uploaded to the `ThreatIntelIndicators` table in Log Analytics. You can view them in:
+
+- **Microsoft Sentinel > Threat Intelligence** blade
+- **Log Analytics > Logs** with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+
+**Audit logs** (if enabled) are stored in the `SOCRadar_TAXII_Audit_CL` custom table. Each import run creates one record per collection with indicators created/revoked, duration, and status. Query with:
+
+```kql
+SOCRadar_TAXII_Audit_CL
+| order by TimeGenerated desc
+```
+
+Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Microsoft Sentinel > Workbooks).
+
 ## About SOCRadar
 
 SOCRadar is an Extended Threat Intelligence (XTI) platform.
