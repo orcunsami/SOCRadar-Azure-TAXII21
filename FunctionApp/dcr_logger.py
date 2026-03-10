@@ -38,17 +38,25 @@ class DcrLogger:
 
     def _ingest(self, endpoint, dcr_id, stream, data):
         if not endpoint or not dcr_id:
+            logger.warning("DCR ingestion skipped: endpoint=%s, dcr_id=%s", bool(endpoint), bool(dcr_id))
             return
         url = "{}/dataCollectionRules/{}/streams/{}?api-version=2023-01-01".format(
             endpoint, dcr_id, stream
         )
+        try:
+            token = self._get_monitor_token()
+        except Exception as e:
+            logger.error("DCR token acquisition failed: %s", e)
+            return
         headers = {
-            "Authorization": "Bearer {}".format(self._get_monitor_token()),
+            "Authorization": "Bearer {}".format(token),
             "Content-Type": "application/json",
         }
         resp = requests.post(url, headers=headers, json=data, timeout=30)
         if resp.status_code not in (200, 204):
             logger.warning("DCR ingestion failed: %d %s", resp.status_code, resp.text[:200])
+        else:
+            logger.info("DCR audit logged: %d records, HTTP %d", len(data), resp.status_code)
 
     def log_audit(self, data):
         record = {
