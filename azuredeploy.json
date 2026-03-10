@@ -545,7 +545,7 @@
         {
             "type": "Microsoft.Resources/deploymentScripts",
             "apiVersion": "2020-10-01",
-            "name": "triggerFirstRun",
+            "name": "[concat('triggerFirstRun-', uniqueString(resourceGroup().id))]",
             "location": "[resourceGroup().location]",
             "kind": "AzureCLI",
             "identity": {
