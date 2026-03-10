@@ -54,6 +54,7 @@ Contact SOCRadar for your API root and collection details.
 - **Storage Account** - Checkpoint state per collection for cursor-based pagination
 - **User-Assigned Managed Identity** - Secure access to Microsoft Sentinel and Storage
 - **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL with per-collection entries
+- **Workbook** (optional) - SOCRadar TAXII 2.1 Dashboard with indicator analytics and audit monitoring
 - **Deployment Script** - Automatically triggers first import after deployment
 
 ## Key Features
