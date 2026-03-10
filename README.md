@@ -32,6 +32,7 @@ az deployment group create \
 | `TAXIIUsername` | Yes | - | SOCRadar Company ID |
 | `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
 | `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
+| `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
 
 Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
@@ -67,7 +68,17 @@ Contact SOCRadar for your API root and collection details.
 
 ## Post-Deployment
 
-The function automatically runs after deployment via a deployment script. Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication per collection).
+The function automatically runs after deployment via a deployment script. By default, the first run fetches indicators from the last 48 hours. Set `InitialLookbackHours=0` to fetch all history (large collections sync incrementally via checkpoints). Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication per collection).
+
+### Managing Collections
+
+To add or remove collections after deployment:
+
+1. Go to **Function App** > **Configuration** > **Application Settings**
+2. Edit `API_ROOTS` and `COLLECTION_IDS` (comma-separated, same order)
+3. Save and restart
+
+New collections start from the configured lookback window. Removed collections leave harmless orphan checkpoints in Table Storage.
 
 ### Monitoring Logs
 

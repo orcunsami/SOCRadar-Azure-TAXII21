@@ -62,6 +62,7 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
     taxii_username = os.environ["TAXII_USERNAME"]
     taxii_password = os.environ["TAXII_PASSWORD"]
     workspace_id = os.environ["WORKSPACE_ID"]
+    initial_lookback_hours = int(os.environ.get("INITIAL_LOOKBACK_HOURS", "48"))
 
     # Time budget: 9 min total (1 min safety margin from 10 min timeout), split equally
     total_budget_seconds = 9 * 60
@@ -91,6 +92,7 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                 table_client=table_client,
                 dcr_logger=dcr_logger,
                 time_budget_seconds=budget_per_collection,
+                initial_lookback_hours=initial_lookback_hours,
             )
             result = processor.run()
 

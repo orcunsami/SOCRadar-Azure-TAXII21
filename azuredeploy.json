@@ -55,6 +55,15 @@
                 "description": "How often to poll TAXII server (5-1440 minutes)"
             }
         },
+        "InitialLookbackHours": {
+            "type": "int",
+            "defaultValue": 48,
+            "minValue": 0,
+            "maxValue": 8760,
+            "metadata": {
+                "description": "Hours of history to fetch on first run (0 = all history, large collections may take several days to sync via checkpoints)"
+            }
+        },
         "EnableAuditLogging": {
             "type": "bool",
             "defaultValue": true,
@@ -346,6 +355,10 @@
                         {
                             "name": "COLLECTION_IDS",
                             "value": "[parameters('CollectionIds')]"
+                        },
+                        {
+                            "name": "INITIAL_LOOKBACK_HOURS",
+                            "value": "[parameters('InitialLookbackHours')]"
                         },
                         {
                             "name": "TAXII_USERNAME",

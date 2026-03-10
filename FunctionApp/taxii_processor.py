@@ -5,7 +5,7 @@ Fetches STIX indicators from TAXII server, uploads to Microsoft Sentinel TI in b
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
 import requests
@@ -24,7 +24,7 @@ class TaxiiProcessor:
 
     def __init__(self, api_root, collection_id, taxii_username, taxii_password,
                  workspace_id, credential=None, table_client=None, dcr_logger=None,
-                 time_budget_seconds=0):
+                 time_budget_seconds=0, initial_lookback_hours=48):
         self.api_root = api_root
         self.collection_id = collection_id
         self.taxii_username = taxii_username
@@ -35,6 +35,7 @@ class TaxiiProcessor:
         self.table_client = table_client
         self.dcr_logger = dcr_logger
         self.time_budget_seconds = time_budget_seconds
+        self.initial_lookback_hours = initial_lookback_hours
         self._mgmt_token = None
 
     def _get_mgmt_token(self) -> str:
@@ -136,6 +137,12 @@ class TaxiiProcessor:
         cursor = checkpoint["cursor"]
         added_after = checkpoint["added_after"]
         is_first_run = added_after == "1970-01-01T00:00:00Z" and not cursor
+
+        # Apply initial lookback on first run
+        if is_first_run and self.initial_lookback_hours > 0:
+            lookback_dt = datetime.now(timezone.utc) - timedelta(hours=self.initial_lookback_hours)
+            added_after = lookback_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            logger.info("First run: lookback %d hours, added_after=%s", self.initial_lookback_hours, added_after)
 
         total_created = 0
         total_revoked = 0
