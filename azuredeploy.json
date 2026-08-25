@@ -15,6 +15,13 @@
                 "description": "Microsoft Sentinel Log Analytics Workspace Name"
             }
         },
+        "CreateWorkspace": {
+            "type": "bool",
+            "defaultValue": true,
+            "metadata": {
+                "description": "Create a new Log Analytics workspace with WorkspaceName (default: true). Set to false if WorkspaceName already exists so this template does not modify its pricing tier."
+            }
+        },
         "WorkspaceLocation": {
             "type": "string",
             "defaultValue": "[resourceGroup().location]",
@@ -96,6 +103,7 @@
             "apiVersion": "2023-09-01",
             "name": "[parameters('WorkspaceName')]",
             "location": "[parameters('WorkspaceLocation')]",
+            "condition": "[parameters('CreateWorkspace')]",
             "properties": {
                 "sku": {
                     "name": "PerGB2018"
