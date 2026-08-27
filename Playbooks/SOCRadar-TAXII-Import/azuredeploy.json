@@ -522,7 +522,7 @@
         {
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
-            "name": "[guid(resourceGroup().id, parameters('PlaybookName'), variables('SentinelContributorRoleId'), deployment().name)]",
+            "name": "[guid(resourceGroup().id, parameters('PlaybookName'), variables('SentinelContributorRoleId'))]",
             "dependsOn": [ "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]" ],
             "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('SentinelContributorRoleId'))]",
@@ -533,7 +533,7 @@
         {
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
-            "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), parameters('PlaybookName'), variables('StorageTableDataContributorRoleId'), deployment().name)]",
+            "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), parameters('PlaybookName'), variables('StorageTableDataContributorRoleId'))]",
             "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
             "dependsOn": [
                 "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]",
