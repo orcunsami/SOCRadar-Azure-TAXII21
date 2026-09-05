@@ -280,10 +280,17 @@ class TaxiiProcessor:
             # indicators for good and no table would ever show the gap.
             if page_failed:
                 logger.error(
-                    "Page %d: %d indicator(s) never reached Sentinel, leaving the "
-                    "checkpoint in place so the next run fetches this page again",
+                    "Page %d: %d indicator(s) never reached Sentinel, holding the "
+                    "checkpoint at this page so the next run fetches it again",
                     page_num, page_failed
                 )
+                # Written with the cursor that fetched THIS page, not the next
+                # one, so the next run repeats it. Writing rather than skipping
+                # matters on the very first run: with no checkpoint at all the
+                # next run would start its lookback window from its own clock
+                # and step over the oldest indicators on the page that just
+                # failed. Saving pins added_after where this run started.
+                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
                 complete = False
                 break
 
