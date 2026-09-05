@@ -134,11 +134,20 @@ def main() -> int:
         out.unlink()
         return 1
 
+    if not deps:
+        # A dependency-free zip is a plausible-looking 9 KB file that indexes
+        # zero functions once Azure unpacks it, and the release asset it would
+        # clobber is the one production re-downloads on every cold start.
+        # Refusing is the only safe answer: a warning gets scrolled past.
+        print("REFUSING: no dependency files in the package. Pass --deps-from "
+              "<released.zip> or populate FunctionApp/.python_packages; without "
+              "them the app cannot import azure.* and indexes no functions.",
+              file=sys.stderr)
+        out.unlink()
+        return 1
+
     print(f"{out}  ({out.stat().st_size} bytes)")
     print(f"  {len(own)} source files, {deps} dependency files")
-    if not deps:
-        print("  WARNING: no .python_packages — pass --deps-from or the app "
-              "will fail to import azure.* at runtime", file=sys.stderr)
     print("  every entry is world-readable")
     return 0
 
