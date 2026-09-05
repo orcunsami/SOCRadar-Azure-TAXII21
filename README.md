@@ -35,6 +35,7 @@ az deployment group create \
 | `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
 | `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
+| `PackageUri` | No | published release | Function App deployment package. Leave the default unless you are testing a build before it is released. |
 
 Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
 
@@ -125,12 +126,32 @@ Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-co
 - **Microsoft Sentinel > Threat Intelligence** blade
 - **Log Analytics > Logs** with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
 
-**Audit logs** (if enabled) are stored in the `SOCRadar_TAXII_Audit_CL` custom table. Each import run creates one record per collection with indicators created/revoked, duration, and status. Query with:
+**Audit logs** (if enabled) are stored in the `SOCRadar_TAXII_Audit_CL` custom table. Each import run creates one record per collection with indicators created, skipped, failed and revoked, duration, and status. Query with:
 
 ```kql
 SOCRadar_TAXII_Audit_CL
 | order by TimeGenerated desc
 ```
+
+`Status` is one of:
+
+| Status | Meaning |
+|--------|---------|
+| `Success` | Every page was fetched and every indicator reached Microsoft Sentinel. |
+| `PartialSuccess` | Some indicators did not reach Microsoft Sentinel. The run left its checkpoint where it was, so the next run fetches those pages again. `IndicatorsFailed` is the count. |
+| `Failed` | The collection could not be read at all. Nothing was checkpointed. `ErrorMessage` carries the reason. |
+
+`IndicatorsSkipped` is different from `IndicatorsFailed`. Skipped indicators
+reached Microsoft Sentinel and were rejected by it, so fetching them again
+would change nothing. Failed indicators never arrived.
+
+A run that reports `PartialSuccess` repeatedly for the same collection is not
+recovering on its own. The import will keep re-fetching the same page rather
+than skip past it, which is the intended trade: a delayed indicator is
+recoverable, a dropped one is not. Retries cover a transient 429 or 5xx from
+the upload API; a persistent 4xx needs the cause fixed. The
+`SOCRadar TAXII indicators did not reach Microsoft Sentinel` analytic rule
+(Content Hub) reports this.
 
 Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Microsoft Sentinel > Workbooks).
 
