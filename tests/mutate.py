@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 """Break the code on purpose and prove the tests notice.
 
-A green test suite says nothing about whether the tests would catch the defect
-they were written for. Each entry below reintroduces one real failure mode --
-the checkpoint advancing past indicators that never landed, a failure counted as
-a rejection, the audit row claiming Success, retries that ignore Retry-After or
-do not happen at all, an audit column dropped from one of the two schemas that
-must agree -- runs the test that is supposed to catch it, and restores the file.
+Each entry below breaks one invariant, runs the test that should catch it, and
+restores the file. A mutation that survives is BLIND and the run exits non-zero.
 
-A mutation that survives is called BLIND: the gate is decorative and the run
-exits non-zero.
-
-Bytecode is disabled for the child runs on purpose. A same-byte-size mutation
-applied and reverted inside one second leaves a .pyc whose (mtime, size) key
-still looks current, and later runs execute the mutated bytecode -- see
-EXP-AZURE-0179.
+Bytecode is disabled for the child runs: a same-size mutation applied and
+reverted inside one second leaves a .pyc that still looks current, and the next
+run would execute the mutated bytecode.
 
     python3 tests/mutate.py
 """

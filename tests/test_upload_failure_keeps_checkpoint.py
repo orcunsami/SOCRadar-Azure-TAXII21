@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """An upload that never reached Microsoft Sentinel must not move the checkpoint.
 
-This is the defect that made the integration lose customer data silently. A
-single 429 or 503 from the threat-intelligence upload API returned a swallowed
-error, the run kept going, the checkpoint advanced past the page, and the audit
-row said Success. Nothing in the workspace could show the gap afterwards,
-because the checkpoint is the only record of where the feed had got to.
-
 Re-uploading a batch that already landed is safe (Sentinel updates the
 indicator). Advancing past one that did not land is not recoverable. These
 checks encode that asymmetry.
