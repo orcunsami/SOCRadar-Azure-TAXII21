@@ -33,3 +33,15 @@ thing each one guards and confirm it goes red:
 - ignore `Retry-After`
 - set `MAX_ATTEMPTS = 1`
 - delete a column from the DCR stream or the table schema
+
+## mutate.py
+
+`python3 tests/mutate.py` breaks the code on purpose, ten times, and checks that
+the matching test file fails each time. A mutation that survives is reported as
+BLIND and the run exits non-zero: that means the gate is decorative, not that
+the code is fine.
+
+It runs the child processes with bytecode disabled. A same-byte-size mutation
+applied and reverted inside one second leaves a `.pyc` whose (mtime, size) key
+still looks current, and later runs would execute the mutated bytecode instead
+of the source — that cost a full round of false results once already.
