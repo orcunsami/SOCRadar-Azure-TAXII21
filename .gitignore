@@ -11,7 +11,11 @@ Thumbs.db
 .idea/
 local.settings.json
 potential-app-taxii21.txt
-scripts/
+# The whole scripts/ directory stays out because it holds a real test.config,
+# but the workspace-safety check belongs in the repo: it is the gate that stops
+# a deployment from resetting an existing workspace's pricing tier.
+scripts/*
+!scripts/test_workspace_safety.sh
 docs/
 Seperate-Repo/
 Solution/

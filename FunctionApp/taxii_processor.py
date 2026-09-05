@@ -19,6 +19,13 @@ SENTINEL_UPLOAD_URL = "https://sentinelus.azure-api.net/workspaces/{workspace_id
 BATCH_SIZE = 100
 PAGE_LIMIT = 100
 
+# A 429 or 5xx means the request never landed. Retrying it is the difference
+# between a delayed indicator and a lost one, so both the fetch and the upload
+# retry, bounded, and both honour Retry-After when the server sends it.
+RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+MAX_ATTEMPTS = 3
+MAX_RETRY_SLEEP = 60
+
 
 class TaxiiProcessor:
 
@@ -37,6 +44,7 @@ class TaxiiProcessor:
         self.time_budget_seconds = time_budget_seconds
         self.initial_lookback_hours = initial_lookback_hours
         self._mgmt_token = None
+        self._run_start = None
 
     def _get_mgmt_token(self) -> str:
         if not self._mgmt_token:
@@ -61,18 +69,52 @@ class TaxiiProcessor:
 
         headers = {"Accept": "application/taxii+json;version=2.1"}
 
-        resp = requests.get(
-            url, headers=headers, params=params,
-            auth=(self.taxii_username, self.taxii_password),
-            timeout=60
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            resp = requests.get(
+                url, headers=headers, params=params,
+                auth=(self.taxii_username, self.taxii_password),
+                timeout=60
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            if not self._sleep_before_retry(resp, attempt, "TAXII fetch"):
+                break
+
+        raise RuntimeError(
+            "TAXII fetch failed: HTTP {} - {}".format(resp.status_code, resp.text[:500])
         )
 
-        if resp.status_code != 200:
-            raise RuntimeError(
-                "TAXII fetch failed: HTTP {} - {}".format(resp.status_code, resp.text[:500])
-            )
+    def _sleep_before_retry(self, resp, attempt, what) -> bool:
+        """Sleep before the next attempt. False means stop retrying.
 
-        return resp.json()
+        Stops on a non-retryable status, on the last attempt, and when the wait
+        would run past the run's time budget. The last case matters: the host
+        kills the function at its own timeout without writing an audit row, so
+        it is better to give up early and report the failure than to sleep into
+        a silent kill.
+        """
+        if resp.status_code not in RETRYABLE_STATUS or attempt >= MAX_ATTEMPTS:
+            return False
+
+        retry_after = resp.headers.get("Retry-After", "")
+        try:
+            wait = min(float(retry_after), MAX_RETRY_SLEEP)
+        except (TypeError, ValueError):
+            wait = min(2 ** attempt, MAX_RETRY_SLEEP)
+
+        if self.time_budget_seconds > 0 and self._run_start is not None:
+            remaining = self.time_budget_seconds - (time.time() - self._run_start)
+            if wait >= remaining:
+                logger.warning(
+                    "%s got HTTP %d but the %.0fs wait exceeds the remaining budget",
+                    what, resp.status_code, wait
+                )
+                return False
+
+        logger.warning("%s got HTTP %d, retrying in %.0fs (attempt %d/%d)",
+                       what, resp.status_code, wait, attempt, MAX_ATTEMPTS)
+        time.sleep(wait)
+        return True
 
     def get_checkpoint(self) -> dict:
         """Get saved cursor and added_after from Azure Table Storage."""
@@ -101,8 +143,15 @@ class TaxiiProcessor:
         }
         self.table_client.upsert_entity(entity)
 
-    def upload_batch(self, indicators: List[dict]) -> Tuple[int, int]:
-        """Upload a batch of STIX indicators to Sentinel TI."""
+    def upload_batch(self, indicators: List[dict]) -> Tuple[int, int, int]:
+        """Upload a batch of STIX indicators to Sentinel TI.
+
+        Returns (created, skipped, failed). The last two are not the same thing.
+        Skipped indicators came back inside a successful response: Sentinel read
+        them and rejected them, so sending them again changes nothing. Failed
+        indicators never reached Sentinel at all, and the caller must keep the
+        checkpoint where it is so the next run fetches them again.
+        """
         token = self._get_mgmt_token()
         url = SENTINEL_UPLOAD_URL.format(workspace_id=self.workspace_id)
         url += "?api-version=2022-07-01"
@@ -116,19 +165,24 @@ class TaxiiProcessor:
             "indicators": indicators,
         }
 
-        resp = requests.post(url, headers=headers, json=body, timeout=60)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
 
-        if resp.status_code == 200:
-            result = resp.json() if resp.text else {}
-            errors = result.get("errors", [])
-            skipped = len(errors)
-            created = len(indicators) - skipped
-            if errors:
-                logger.warning("Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
-            return created, skipped
-        else:
-            logger.error("Upload failed: %d %s", resp.status_code, resp.text[:500])
-            return 0, len(indicators)
+            if resp.status_code == 200:
+                result = resp.json() if resp.text else {}
+                errors = result.get("errors", [])
+                skipped = len(errors)
+                created = len(indicators) - skipped
+                if errors:
+                    logger.warning("Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
+                return created, skipped, 0
+
+            if not self._sleep_before_retry(resp, attempt, "Sentinel upload"):
+                break
+
+        logger.error("Upload failed after %d attempt(s): %d %s",
+                     attempt, resp.status_code, resp.text[:500])
+        return 0, 0, len(indicators)
 
     def run(self) -> dict:
         """Main loop: fetch TAXII pages, filter indicators, upload to Sentinel."""
@@ -145,10 +199,13 @@ class TaxiiProcessor:
             logger.info("First run: lookback %d hours, added_after=%s", self.initial_lookback_hours, added_after)
 
         total_created = 0
+        total_skipped = 0
+        total_failed = 0
         total_revoked = 0
         pages_fetched = 0
         type_stats = {}
         run_start = time.time()
+        self._run_start = run_start
 
         logger.info(
             "Starting fetch - %s/%s, cursor=%s, added_after=%s%s",
@@ -160,6 +217,7 @@ class TaxiiProcessor:
         )
 
         page_num = 0
+        complete = True
         while True:
             page_num += 1
             if cursor:
@@ -201,16 +259,33 @@ class TaxiiProcessor:
                         page_num, len(indicators), page_revoked)
 
             # Batch upload
+            page_failed = 0
             total_batches = (len(indicators) + BATCH_SIZE - 1) // BATCH_SIZE if indicators else 0
             for i in range(0, len(indicators), BATCH_SIZE):
                 batch = indicators[i:i + BATCH_SIZE]
                 batch_num = (i // BATCH_SIZE) + 1
                 logger.info("Uploading batch %d/%d (%d indicators)",
                             batch_num, total_batches, len(batch))
-                created, skipped = self.upload_batch(batch)
+                created, skipped, failed = self.upload_batch(batch)
                 total_created += created
-                logger.info("Batch %d result: %d created, %d skipped",
-                            batch_num, created, skipped)
+                total_skipped += skipped
+                total_failed += failed
+                page_failed += failed
+                logger.info("Batch %d result: %d created, %d skipped, %d failed",
+                            batch_num, created, skipped, failed)
+
+            # A page that lost indicators must not move the checkpoint. Leaving
+            # it where it is costs a re-upload of the batches that did land,
+            # which Sentinel treats as an update; advancing it would drop those
+            # indicators for good and no table would ever show the gap.
+            if page_failed:
+                logger.error(
+                    "Page %d: %d indicator(s) never reached Sentinel, leaving the "
+                    "checkpoint in place so the next run fetches this page again",
+                    page_num, page_failed
+                )
+                complete = False
+                break
 
             # Update cursor
             if next_cursor:
@@ -233,16 +308,22 @@ class TaxiiProcessor:
                     break
 
         logger.info(
-            "Fetch complete for %s/%s - %d created, %d revoked, %d pages, types=%s",
+            "Fetch %s for %s/%s - %d created, %d skipped, %d failed, %d revoked, "
+            "%d pages, types=%s",
+            "complete" if complete else "incomplete",
             self.api_root, self.collection_id,
-            total_created, total_revoked, pages_fetched, type_stats
+            total_created, total_skipped, total_failed, total_revoked,
+            pages_fetched, type_stats
         )
 
         return {
             "api_root": self.api_root,
             "collection_id": self.collection_id,
             "indicators_created": total_created,
+            "indicators_skipped": total_skipped,
+            "indicators_failed": total_failed,
             "indicators_revoked": total_revoked,
             "pages_fetched": pages_fetched,
             "type_stats": type_stats,
+            "complete": complete,
         }

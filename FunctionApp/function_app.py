@@ -71,9 +71,12 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
 
     # Aggregate totals
     total_created = 0
+    total_skipped = 0
+    total_failed = 0
     total_revoked = 0
     total_pages = 0
     collections_succeeded = 0
+    collections_partial = 0
     collections_failed = 0
     errors = []
 
@@ -98,13 +101,29 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
 
             collection_ms = int((time.time() - collection_start) * 1000)
             total_created += result["indicators_created"]
+            total_skipped += result["indicators_skipped"]
+            total_failed += result["indicators_failed"]
             total_revoked += result["indicators_revoked"]
             total_pages += result["pages_fetched"]
-            collections_succeeded += 1
 
-            logger.info("Step 2: %s/%s done - %d created, %dms",
-                        api_root, collection_id[:8],
-                        result["indicators_created"], collection_ms)
+            # A collection that lost indicators is not a success, even though it
+            # raised nothing. Reporting it as one is what hid this class of data
+            # loss: the run stayed green while the checkpoint moved past the gap.
+            lost = result["indicators_failed"]
+            if lost or not result["complete"]:
+                collections_partial += 1
+                status = "PartialSuccess"
+                message = ("{} indicator(s) did not reach Microsoft Sentinel; the "
+                           "checkpoint was left in place and they will be fetched "
+                           "again on the next run").format(lost)
+                logger.error("Step 2: %s/%s PARTIAL - %s", api_root, collection_id[:8], message)
+            else:
+                collections_succeeded += 1
+                status = "Success"
+                message = ""
+                logger.info("Step 2: %s/%s done - %d created, %dms",
+                            api_root, collection_id[:8],
+                            result["indicators_created"], collection_ms)
 
             # Per-collection audit log
             if dcr_logger:
@@ -112,11 +131,13 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                     "api_root": api_root,
                     "collection_id": collection_id,
                     "indicators_created": result["indicators_created"],
+                    "indicators_skipped": result["indicators_skipped"],
+                    "indicators_failed": result["indicators_failed"],
                     "indicators_revoked": result["indicators_revoked"],
                     "pages_fetched": result["pages_fetched"],
                     "duration_ms": collection_ms,
-                    "status": "Success",
-                    "error_message": "",
+                    "status": status,
+                    "error_message": message,
                 })
 
         except Exception as e:
@@ -134,6 +155,8 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                         "api_root": api_root,
                         "collection_id": collection_id,
                         "indicators_created": 0,
+                        "indicators_skipped": 0,
+                        "indicators_failed": 0,
                         "indicators_revoked": 0,
                         "pages_fetched": 0,
                         "duration_ms": collection_ms,
@@ -146,15 +169,22 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
     elapsed_ms = int((time.time() - start_time) * 1000)
 
     logger.info(
-        "Step 3: Import complete - %d created, %d revoked, %d pages, "
-        "%d/%d collections succeeded, %dms",
-        total_created, total_revoked, total_pages,
-        collections_succeeded, len(api_roots), elapsed_ms
+        "Step 3: Import complete - %d created, %d skipped, %d failed, %d revoked, "
+        "%d pages, %d/%d collections succeeded, %d partial, %dms",
+        total_created, total_skipped, total_failed, total_revoked, total_pages,
+        collections_succeeded, len(api_roots), collections_partial, elapsed_ms
     )
 
     if collections_failed > 0:
         logger.error("Step 3: %d collection(s) failed: %s",
                      collections_failed, "; ".join(errors))
+
+    if collections_partial > 0:
+        logger.error(
+            "Step 3: %d collection(s) partial - %d indicator(s) did not reach "
+            "Microsoft Sentinel and will be retried on the next run",
+            collections_partial, total_failed
+        )
 
     logger.info("=== SOCRadar TAXII Import finished (%dms) ===", elapsed_ms)
 
