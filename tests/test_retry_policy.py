@@ -27,7 +27,7 @@ def upload(responses, **kwargs):
     stub = FakeRequests(post_responses=responses)
     sleeps = []
     processor = make_processor(stub, sleeps=sleeps, **kwargs)
-    created, skipped, failed = processor.upload_batch([{"id": "indicator--1"}])
+    created, skipped, failed, _ = processor.upload_batch([{"id": "indicator--1"}])
     return created, skipped, failed, sleeps, stub
 
 

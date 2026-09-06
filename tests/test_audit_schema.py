@@ -49,6 +49,21 @@ for resource in template["resources"]:
         stream_columns = [c["name"] for c in list(declarations.values())[0]["columns"]]
 
 check(table_columns is not None, "no Log Analytics table resource found in the template")
+
+# The same table is declared twice: once in this resource group and once inside
+# the nested deployment that targets an external workspace resource group. Two
+# copies of one decision drift, so the nested copy has to be byte-equal.
+nested_schemas = [
+    r["properties"]["schema"]
+    for dep in template["resources"] if dep["type"] == "Microsoft.Resources/deployments"
+    for r in dep["properties"]["template"]["resources"]
+    if r["type"] == "Microsoft.OperationalInsights/workspaces/tables"
+]
+local_schema = next(r["properties"]["schema"] for r in template["resources"]
+                    if r["type"] == "Microsoft.OperationalInsights/workspaces/tables")
+check(len(nested_schemas) == 1, "expected exactly one audit table inside the nested deployment, found %d" % len(nested_schemas))
+check(nested_schemas and nested_schemas[0] == local_schema,
+      "the nested audit table drifted from the local one")
 check(stream_columns is not None, "no data collection rule found in the template")
 
 emitted = emitted_fields()

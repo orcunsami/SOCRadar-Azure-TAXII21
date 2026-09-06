@@ -143,14 +143,17 @@ class TaxiiProcessor:
         }
         self.table_client.upsert_entity(entity)
 
-    def upload_batch(self, indicators: List[dict]) -> Tuple[int, int, int]:
+    def upload_batch(self, indicators: List[dict]) -> Tuple[int, int, int, set]:
         """Upload a batch of STIX indicators to Sentinel TI.
 
-        Returns (created, skipped, failed). The last two are not the same thing.
-        Skipped indicators came back inside a successful response: Sentinel read
-        them and rejected them, so sending them again changes nothing. Failed
-        indicators never reached Sentinel at all, and the caller must keep the
-        checkpoint where it is so the next run fetches them again.
+        Returns (created, skipped, failed, rejected). Skipped and failed are not
+        the same thing. Skipped indicators came back inside a successful
+        response: Sentinel read them and rejected them, so sending them again
+        changes nothing. Failed indicators never reached Sentinel at all, and
+        the caller must keep the checkpoint where it is so the next run fetches
+        them again. `rejected` holds the batch positions of the skipped ones,
+        so the caller can tell a revoked indicator that landed from one that
+        did not.
         """
         token = self._get_mgmt_token()
         url = SENTINEL_UPLOAD_URL.format(workspace_id=self.workspace_id)
@@ -173,16 +176,18 @@ class TaxiiProcessor:
                 errors = result.get("errors", [])
                 skipped = len(errors)
                 created = len(indicators) - skipped
+                rejected = {e.get("recordIndex") for e in errors
+                            if isinstance(e, dict) and isinstance(e.get("recordIndex"), int)}
                 if errors:
                     logger.warning("Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
-                return created, skipped, 0
+                return created, skipped, 0, rejected
 
             if not self._sleep_before_retry(resp, attempt, "Sentinel upload"):
                 break
 
         logger.error("Upload failed after %d attempt(s): %d %s",
                      attempt, resp.status_code, resp.text[:500])
-        return 0, 0, len(indicators)
+        return 0, 0, len(indicators), set()
 
     def run(self) -> dict:
         """Main loop: fetch TAXII pages, filter indicators, upload to Sentinel."""
@@ -237,25 +242,31 @@ class TaxiiProcessor:
                 logger.info("Page %d empty, stopping", page_num)
                 break
 
-            # Filter and prepare indicators
+            # Filter and prepare indicators. A revoked indicator is sent like
+            # any other, with its revoked flag: Sentinel stores the flag and
+            # keeps the indicator out of matching. Dropping it here, as the
+            # code once did, left an indicator SOCRadar had withdrawn active
+            # in the customer's workspace.
             indicators = []
+            revoked_flags = []
             page_revoked = 0
             for obj in objects:
                 obj_type = obj.get("type", "unknown")
                 type_stats[obj_type] = type_stats.get(obj_type, 0) + 1
 
-                if obj.get("revoked") is True:
-                    total_revoked += 1
-                    page_revoked += 1
-                    continue
-
                 prepared = prepare_for_sentinel(obj, self.collection_id)
                 if not prepared:
+                    if obj_type == "indicator" and obj.get("revoked") is True:
+                        logger.warning("Revoked indicator %s has no pattern and cannot be sent",
+                                       obj.get("id"))
                     continue
 
+                is_revoked = prepared.get("revoked") is True
+                page_revoked += 1 if is_revoked else 0
                 indicators.append(prepared)
+                revoked_flags.append(is_revoked)
 
-            logger.info("Page %d filtered: %d to upload, %d revoked",
+            logger.info("Page %d filtered: %d to upload (%d of them revoked)",
                         page_num, len(indicators), page_revoked)
 
             # Batch upload
@@ -263,16 +274,23 @@ class TaxiiProcessor:
             total_batches = (len(indicators) + BATCH_SIZE - 1) // BATCH_SIZE if indicators else 0
             for i in range(0, len(indicators), BATCH_SIZE):
                 batch = indicators[i:i + BATCH_SIZE]
+                batch_revoked = {n for n, flag in enumerate(revoked_flags[i:i + BATCH_SIZE]) if flag}
                 batch_num = (i // BATCH_SIZE) + 1
                 logger.info("Uploading batch %d/%d (%d indicators)",
                             batch_num, total_batches, len(batch))
-                created, skipped, failed = self.upload_batch(batch)
+                created, skipped, failed, rejected = self.upload_batch(batch)
+                # A revoked indicator Sentinel accepted counts as revoked, not
+                # created. One it rejected is skipped like any other, and one
+                # that never arrived is failed like any other.
+                revoked_ok = len(batch_revoked - rejected) if not failed else 0
+                created -= revoked_ok
+                total_revoked += revoked_ok
                 total_created += created
                 total_skipped += skipped
                 total_failed += failed
                 page_failed += failed
-                logger.info("Batch %d result: %d created, %d skipped, %d failed",
-                            batch_num, created, skipped, failed)
+                logger.info("Batch %d result: %d created, %d revoked, %d skipped, %d failed",
+                            batch_num, created, revoked_ok, skipped, failed)
 
             # A page that lost indicators must not move the checkpoint. Leaving
             # it where it is costs a re-upload of the batches that did land,

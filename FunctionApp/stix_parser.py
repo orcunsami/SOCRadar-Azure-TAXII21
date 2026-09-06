@@ -43,11 +43,11 @@ def prepare_for_sentinel(stix_obj, collection_id=""):
     Prepare a STIX 2.1 indicator for Sentinel TI uploadIndicators API.
     Adds Sentinel extension and SOCRadar labels. Strips non-STIX fields.
     Returns enriched indicator dict, or None if not a valid indicator.
+
+    A revoked indicator is prepared like any other and keeps its `revoked`
+    flag: uploading it is how Sentinel learns the indicator was withdrawn.
     """
     if stix_obj.get("type") != "indicator":
-        return None
-
-    if stix_obj.get("revoked") is True:
         return None
 
     if not stix_obj.get("pattern"):

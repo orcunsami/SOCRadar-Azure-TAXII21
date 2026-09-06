@@ -47,6 +47,14 @@ MUTATIONS = [
                         },
 ''','''''',
   "tests/test_audit_schema.py"),
+ ("nested table column removed","azuredeploy.json",
+  '''                                        {
+                                            "name": "IndicatorsFailed",
+                                            "type": "int",
+                                            "description": "Indicators that never reached Microsoft Sentinel and will be fetched again"
+                                        },
+''','''''',
+  "tests/test_audit_schema.py"),
  ("Status description reverted","azuredeploy.json",
   '''"description": "Run status (Success, PartialSuccess, Failed)"''','''"description": "Run status (Success, Failed)"''',
   "tests/test_audit_schema.py"),
@@ -54,6 +62,21 @@ MUTATIONS = [
   """                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
                 complete = False""","""                complete = False""",
   "tests/test_upload_failure_keeps_checkpoint.py"),
+ ("revoked dropped before upload","FunctionApp/stix_parser.py",
+  '''    if not stix_obj.get("pattern"):''','''    if not stix_obj.get("pattern") or stix_obj.get("revoked") is True:''',
+  "tests/test_revoked_upload.py"),
+ ("revoked flag stripped","FunctionApp/stix_parser.py",
+  '''NON_STIX_FIELDS = {"date_added", "version", "threat_feed_source_name"}''','''NON_STIX_FIELDS = {"date_added", "version", "threat_feed_source_name", "revoked"}''',
+  "tests/test_revoked_upload.py"),
+ ("revoked counted when rejected","FunctionApp/taxii_processor.py",
+  '''                revoked_ok = len(batch_revoked - rejected) if not failed else 0''','''                revoked_ok = len(batch_revoked) if not failed else 0''',
+  "tests/test_revoked_upload.py"),
+ ("revoked counted when failed","FunctionApp/taxii_processor.py",
+  '''                revoked_ok = len(batch_revoked - rejected) if not failed else 0''','''                revoked_ok = len(batch_revoked - rejected)''',
+  "tests/test_revoked_upload.py"),
+ ("revoked counted as created","FunctionApp/taxii_processor.py",
+  '''                created -= revoked_ok''','''                created -= 0''',
+  "tests/test_revoked_upload.py"),
  ("failed page advances cursor","FunctionApp/taxii_processor.py",
   """                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
                 complete = False""","""                self.save_checkpoint(next_cursor or cursor, added_after, total_created, pages_fetched)

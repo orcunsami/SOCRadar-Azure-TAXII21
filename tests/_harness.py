@@ -42,6 +42,7 @@ class FakeRequests:
         self.post_responses = list(post_responses or [])
         self.get_calls = []
         self.post_calls = []
+        self.post_bodies = []
 
     # A page that keeps saying "more" would loop forever if the code under test
     # stopped honouring its stop conditions, so the stub refuses to serve an
@@ -61,6 +62,7 @@ class FakeRequests:
         return self._next(self.get_responses, self.get_calls, (url, kwargs.get("params")))
 
     def post(self, url, **kwargs):
+        self.post_bodies.append(kwargs.get("json") or {})
         return self._next(self.post_responses, self.post_calls, (url, len((kwargs.get("json") or {}).get("indicators", []))))
 
 
@@ -85,17 +87,20 @@ class FakeCredential:
         return types.SimpleNamespace(token="token")
 
 
-def indicator(value):
-    return {
+def indicator(value, **extra):
+    obj = {
         "type": "indicator",
         "id": "indicator--%s" % value,
         "pattern": "[ipv4-addr:value = '%s']" % value,
         "pattern_type": "stix",
     }
+    obj.update(extra)
+    return obj
 
 
-def page(values, more=False, next_cursor=""):
-    return {"objects": [indicator(v) for v in values], "more": more, "next": next_cursor}
+def page(values, more=False, next_cursor="", objects=None):
+    objects = objects if objects is not None else [indicator(v) for v in values]
+    return {"objects": objects, "more": more, "next": next_cursor}
 
 
 def make_processor(requests_stub, table=None, sleeps=None, **kwargs):
