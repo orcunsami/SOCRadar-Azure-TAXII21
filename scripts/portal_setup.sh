@@ -105,6 +105,8 @@ echo ""
 umask 077
 PARAMS_FILE="$(mktemp)"
 trap 'rm -f "$PARAMS_FILE"' EXIT
+export WORKSPACE_NAME DEPLOY_NEW_WORKSPACE WORKSPACE_RESOURCE_GROUP LOCATION API_ROOTS COLLECTION_IDS \
+       TAXII_USERNAME TAXII_PASSWORD POLLING_INTERVAL_MINUTES INITIAL_LOOKBACK_HOURS ENABLE_AUDIT_LOGGING PACKAGE_URI
 python3 - "$PARAMS_FILE" <<'PY'
 import json, os, sys
 def b(v): return str(v).lower() == "true"
@@ -127,8 +129,6 @@ json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/de
            "contentVersion": "1.0.0.0",
            "parameters": {k: {"value": v} for k, v in p.items()}}, open(sys.argv[1], "w"))
 PY
-export WORKSPACE_NAME DEPLOY_NEW_WORKSPACE WORKSPACE_RESOURCE_GROUP LOCATION API_ROOTS COLLECTION_IDS \
-       TAXII_USERNAME TAXII_PASSWORD POLLING_INTERVAL_MINUTES INITIAL_LOOKBACK_HOURS ENABLE_AUDIT_LOGGING PACKAGE_URI
 
 # Step 1: Deploy ARM template
 echo "=== Step 1: Deploying ARM Template ==="
