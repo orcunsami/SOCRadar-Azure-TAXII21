@@ -6,7 +6,7 @@
         "description": "Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel using Azure Functions. Supports multiple collections, cursor-based pagination, checkpoint/resume, and batch upload.",
         "version": "1.0.0",
         "author": "SOCRadar",
-        "lastUpdateTime": "2026-03-08T00:00:00.000Z"
+        "lastUpdateTime": "2026-09-06T00:00:00.000Z"
     },
     "parameters": {
         "WorkspaceName": {
@@ -20,6 +20,13 @@
             "defaultValue": false,
             "metadata": {
                 "description": "Create WorkspaceName instead of using an existing one. The workspace resource states no workspace-level settings, so leaving this false against an existing workspace never touches its pricing tier, retention or daily cap -- and setting it true by mistake is harmless for the same reason."
+            }
+        },
+        "WorkspaceResourceGroup": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().name]",
+            "metadata": {
+                "description": "Resource group of the Microsoft Sentinel workspace. Leave the default when the workspace is in the resource group you deploy to. Set it when the workspace lives elsewhere: Microsoft Sentinel must already be enabled there, and the audit table and workspace role are created there by a nested deployment."
             }
         },
         "WorkspaceLocation": {
@@ -101,7 +108,9 @@
         "AuditTableName": "SOCRadar_TAXII_Audit_CL",
         "AuditDcrName": "SOCRadar-TAXII-Audit-DCR",
         "AuditStreamName": "Custom-SOCRadar_TAXII_Audit_CL",
-        "workspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
+        "isExternalWorkspace": "[not(equals(parameters('WorkspaceResourceGroup'), resourceGroup().name))]",
+        "deployWorkspace": "[and(parameters('DeployNewWorkspace'), not(variables('isExternalWorkspace')))]",
+        "workspaceResourceId": "[resourceId(parameters('WorkspaceResourceGroup'), 'Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
         "pollingSchedule": "[if(greaterOrEquals(parameters('PollingIntervalMinutes'), 60), concat('0 0 */', string(div(parameters('PollingIntervalMinutes'), 60)), ' * * *'), concat('0 */', string(parameters('PollingIntervalMinutes')), ' * * * *'))]"
     },
     "resources": [
@@ -110,10 +119,11 @@
             "apiVersion": "2023-09-01",
             "name": "[parameters('WorkspaceName')]",
             "location": "[parameters('WorkspaceLocation')]",
-            "condition": "[parameters('DeployNewWorkspace')]",
+            "condition": "[variables('deployWorkspace')]",
             "properties": {}
         },
         {
+            "condition": "[not(variables('isExternalWorkspace'))]",
             "type": "Microsoft.OperationsManagement/solutions",
             "apiVersion": "2015-11-01-preview",
             "name": "[concat('SecurityInsights(', parameters('WorkspaceName'), ')')]",
@@ -132,6 +142,7 @@
             }
         },
         {
+            "condition": "[not(variables('isExternalWorkspace'))]",
             "type": "Microsoft.OperationalInsights/workspaces/providers/onboardingStates",
             "apiVersion": "2024-03-01",
             "name": "[concat(parameters('WorkspaceName'), '/Microsoft.SecurityInsights/default')]",
@@ -184,7 +195,7 @@
             }
         },
         {
-            "condition": "[parameters('EnableAuditLogging')]",
+            "condition": "[and(parameters('EnableAuditLogging'), not(variables('isExternalWorkspace')))]",
             "type": "Microsoft.OperationalInsights/workspaces/tables",
             "apiVersion": "2022-10-01",
             "name": "[concat(parameters('WorkspaceName'), '/', variables('AuditTableName'))]",
@@ -229,7 +240,7 @@
                         {
                             "name": "IndicatorsRevoked",
                             "type": "int",
-                            "description": "Revoked indicators encountered"
+                            "description": "Revoked indicators uploaded to Microsoft Sentinel with the revoked flag"
                         },
                         {
                             "name": "PagesFetched",
@@ -258,6 +269,109 @@
             }
         },
         {
+            "condition": "[variables('isExternalWorkspace')]",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2021-04-01",
+            "name": "deploy-workspace-resources",
+            "resourceGroup": "[parameters('WorkspaceResourceGroup')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "expressionEvaluationOptions": {
+                    "scope": "outer"
+                },
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "resources": [
+                        {
+                            "condition": "[parameters('EnableAuditLogging')]",
+                            "type": "Microsoft.OperationalInsights/workspaces/tables",
+                            "apiVersion": "2022-10-01",
+                            "name": "[concat(parameters('WorkspaceName'), '/', variables('AuditTableName'))]",
+                            "properties": {
+                                "schema": {
+                                    "name": "[variables('AuditTableName')]",
+                                    "columns": [
+                                        {
+                                            "name": "TimeGenerated",
+                                            "type": "datetime",
+                                            "description": "Event timestamp"
+                                        },
+                                        {
+                                            "name": "ApiRoot",
+                                            "type": "string",
+                                            "description": "TAXII API root name"
+                                        },
+                                        {
+                                            "name": "CollectionId",
+                                            "type": "string",
+                                            "description": "TAXII collection UUID"
+                                        },
+                                        {
+                                            "name": "IndicatorsCreated",
+                                            "type": "int",
+                                            "description": "Indicators successfully uploaded"
+                                        },
+                                        {
+                                            "name": "IndicatorsSkipped",
+                                            "type": "int",
+                                            "description": "Indicators Microsoft Sentinel accepted the request for but rejected"
+                                        },
+                                        {
+                                            "name": "IndicatorsFailed",
+                                            "type": "int",
+                                            "description": "Indicators that never reached Microsoft Sentinel and will be fetched again"
+                                        },
+                                        {
+                                            "name": "IndicatorsRevoked",
+                                            "type": "int",
+                                            "description": "Revoked indicators uploaded to Microsoft Sentinel with the revoked flag"
+                                        },
+                                        {
+                                            "name": "PagesFetched",
+                                            "type": "int",
+                                            "description": "TAXII pages fetched"
+                                        },
+                                        {
+                                            "name": "DurationMs",
+                                            "type": "int",
+                                            "description": "Run duration in milliseconds"
+                                        },
+                                        {
+                                            "name": "Status",
+                                            "type": "string",
+                                            "description": "Run status (Success, PartialSuccess, Failed)"
+                                        },
+                                        {
+                                            "name": "ErrorMessage",
+                                            "type": "string",
+                                            "description": "Error details if any"
+                                        }
+                                    ]
+                                },
+                                "retentionInDays": 30,
+                                "plan": "Analytics"
+                            }
+                        },
+                        {
+                            "type": "Microsoft.Authorization/roleAssignments",
+                            "apiVersion": "2022-04-01",
+                            "name": "[guid(variables('workspaceResourceId'), variables('managedIdentityName'), variables('SentinelContributorRoleId'))]",
+                            "scope": "[variables('workspaceResourceId')]",
+                            "properties": {
+                                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('SentinelContributorRoleId'))]",
+                                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2024-11-30').principalId]",
+                                "principalType": "ServicePrincipal"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
             "condition": "[parameters('EnableAuditLogging')]",
             "type": "Microsoft.Insights/dataCollectionRules",
             "apiVersion": "2023-03-11",
@@ -265,7 +379,8 @@
             "location": "[parameters('WorkspaceLocation')]",
             "dependsOn": [
                 "[resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('DceName'))]",
-                "[resourceId('Microsoft.OperationalInsights/workspaces/tables', parameters('WorkspaceName'), variables('AuditTableName'))]"
+                "[resourceId('Microsoft.OperationalInsights/workspaces/tables', parameters('WorkspaceName'), variables('AuditTableName'))]",
+                "deploy-workspace-resources"
             ],
             "kind": "Direct",
             "properties": {
@@ -374,7 +489,7 @@
             ],
             "properties": {
                 "Application_Type": "web",
-                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
+                "WorkspaceResourceId": "[variables('workspaceResourceId')]",
                 "RetentionInDays": 30
             }
         },
@@ -495,11 +610,14 @@
             }
         },
         {
+            "condition": "[not(variables('isExternalWorkspace'))]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
-            "name": "[guid(resourceGroup().id, variables('managedIdentityName'), variables('SentinelContributorRoleId'))]",
+            "name": "[guid(variables('workspaceResourceId'), variables('managedIdentityName'), variables('SentinelContributorRoleId'))]",
+            "scope": "[variables('workspaceResourceId')]",
             "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
+                "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]"
             ],
             "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('SentinelContributorRoleId'))]",
@@ -561,7 +679,7 @@
             "location": "[parameters('WorkspaceLocation')]",
             "kind": "shared",
             "dependsOn": [
-                "[variables('workspaceResourceId')]"
+                "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]"
             ],
             "properties": {
                 "displayName": "SOCRadar TAXII 2.1 Dashboard",

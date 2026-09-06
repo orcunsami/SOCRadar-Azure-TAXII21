@@ -22,12 +22,15 @@ az deployment group create \
     TAXIIPassword=<API_KEY>
 ```
 
+If the workspace lives in another resource group, add `WorkspaceResourceGroup=<WORKSPACE_RG>`.
+
 ## Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
 | `DeployNewWorkspace` | No | `false` | Create `WorkspaceName` instead of using an existing one. Set `true` for a greenfield deploy into an empty resource group; leave `false` to attach to your existing workspace without touching its pricing tier, retention or daily cap. |
+| `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
 | `TAXIIUsername` | Yes | - | SOCRadar Company ID |
@@ -67,6 +70,18 @@ you picked, reset your commitment tier from **Log Analytics workspaces > Usage a
 costs > Pricing tier**. The current template states no workspace-level settings at all, so
 redeploying -- even with `DeployNewWorkspace=true` set by mistake -- cannot change its pricing
 tier, retention or daily cap.
+
+Redeploying over an installation made before September 2026 also adds a **Microsoft Sentinel Contributor** assignment scoped to the workspace; the earlier resource-group-scoped one stays and does no harm. Before that date revoked indicators were dropped instead of uploaded, so `IndicatorsRevoked` in older audit rows means "seen", not "uploaded".
+
+## Workspace in another resource group
+
+Set `WorkspaceResourceGroup` to the resource group that holds the workspace. Microsoft Sentinel must already be enabled on it (`DeployNewWorkspace` is ignored). The Function App and its storage, DCE, DCR and workbook land in the resource group you deploy to; the audit table and the **Microsoft Sentinel Contributor** assignment for the managed identity are created in the workspace resource group by a nested deployment, so the account running the deployment needs `Microsoft.Authorization/roleAssignments/write` there (Owner or User Access Administrator).
+
+| Error | Cause |
+|-------|-------|
+| `LinkedResourceNotFound` / `ResourceNotFound` on the workspace | `WorkspaceName` does not exist in `WorkspaceResourceGroup` |
+| `AuthorizationFailed` on `deploy-workspace-resources` | no role-assignment rights on the workspace resource group |
+| `not onboarded` in the function log | Microsoft Sentinel is not enabled on that workspace |
 
 ## What Gets Deployed
 
@@ -125,6 +140,8 @@ Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-co
 
 - **Microsoft Sentinel > Threat Intelligence** blade
 - **Log Analytics > Logs** with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+
+**Revoked indicators.** When SOCRadar withdraws an indicator, the TAXII feed carries the object again with `revoked: true`. The import uploads it like any other indicator, so Microsoft Sentinel stores the revoked flag and stops matching on it. `IndicatorsRevoked` in the audit table counts the revoked indicators Microsoft Sentinel accepted in that run.
 
 **Audit logs** (if enabled) are stored in the `SOCRadar_TAXII_Audit_CL` custom table. Each import run creates one record per collection with indicators created, skipped, failed and revoked, duration, and status. Query with:
 

@@ -50,8 +50,8 @@ TAXII_PASSWORD="${ENV_TAXII_PASSWORD:-${TAXII_PASSWORD:-}}"
 TAXII_PASSWORD_FILE="${ENV_TAXII_PASSWORD_FILE:-${TAXII_PASSWORD_FILE:-}}"
 WORKSPACE_RESOURCE_GROUP="${WORKSPACE_RESOURCE_GROUP:-$RESOURCE_GROUP}"
 
-# The password can come from a file so it never sits on a command line.
-if [ -z "$TAXII_PASSWORD" ] && [ -n "$TAXII_PASSWORD_FILE" ] && [ -f "$TAXII_PASSWORD_FILE" ]; then
+# The password can come from a file so it never sits on a command line or in .env.
+if [ -n "$TAXII_PASSWORD_FILE" ] && [ -f "$TAXII_PASSWORD_FILE" ]; then
     TAXII_PASSWORD="$(head -c 4096 "$TAXII_PASSWORD_FILE" | tr -d '\r\n')"
 fi
 
