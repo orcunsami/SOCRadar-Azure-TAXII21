@@ -77,6 +77,12 @@ MUTATIONS = [
  ("revoked counted as created","FunctionApp/taxii_processor.py",
   '''                created -= revoked_ok''','''                created -= 0''',
   "tests/test_revoked_upload.py"),
+ ("last page keeps stale cursor","FunctionApp/taxii_processor.py",
+  '''            elif not more and self._last_date_added:''','''            elif False:''',
+  "tests/test_last_page_checkpoint.py"),
+ ("marker ignored on fetch","FunctionApp/taxii_processor.py",
+  '''                self._last_date_added = resp.headers.get("X-TAXII-Date-Added-Last", "") or ""''','''                self._last_date_added = ""''',
+  "tests/test_last_page_checkpoint.py"),
  ("failed page advances cursor","FunctionApp/taxii_processor.py",
   """                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
                 complete = False""","""                self.save_checkpoint(next_cursor or cursor, added_after, total_created, pages_fetched)

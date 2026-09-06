@@ -45,6 +45,7 @@ class TaxiiProcessor:
         self.initial_lookback_hours = initial_lookback_hours
         self._mgmt_token = None
         self._run_start = None
+        self._last_date_added = ""
 
     def _get_mgmt_token(self) -> str:
         if not self._mgmt_token:
@@ -76,6 +77,10 @@ class TaxiiProcessor:
                 timeout=60
             )
             if resp.status_code == 200:
+                # TAXII 2.1 marks the newest object on the page here. It is
+                # the only way to continue past a page the server sends no
+                # cursor for.
+                self._last_date_added = resp.headers.get("X-TAXII-Date-Added-Last", "") or ""
                 return resp.json()
             if not self._sleep_before_retry(resp, attempt, "TAXII fetch"):
                 break
@@ -312,9 +317,16 @@ class TaxiiProcessor:
                 complete = False
                 break
 
-            # Update cursor
+            # Update cursor. The last page comes back with more=false and no
+            # cursor at all. Keeping the cursor that fetched it would make
+            # every later run fetch and re-upload that same page (measured:
+            # the same 48 indicators, run after run), so the checkpoint moves
+            # to the spec's own marker for the newest object instead.
             if next_cursor:
                 cursor = next_cursor
+            elif not more and self._last_date_added:
+                cursor = ""
+                added_after = self._last_date_added
 
             # Save checkpoint after each page for crash resilience
             self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
