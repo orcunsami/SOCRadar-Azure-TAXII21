@@ -1,0 +1,19 @@
+# Copy to scripts/test.config (git-ignored) and fill in your own values.
+SUBSCRIPTION_ID=""
+RESOURCE_GROUP=""
+WORKSPACE_NAME=""
+# Set only when the workspace lives in another resource group (cross-RG deploy).
+# Microsoft Sentinel must already be enabled on that workspace.
+WORKSPACE_RESOURCE_GROUP=""
+LOCATION="westeurope"
+DEPLOY_NEW_WORKSPACE="true"
+API_ROOTS="radar_alpha"
+COLLECTION_IDS=""
+POLLING_INTERVAL_MINUTES="60"
+INITIAL_LOOKBACK_HOURS="48"
+ENABLE_AUDIT_LOGGING="true"
+# Optional: test a package that is not released yet (blob URL with a read SAS)
+PACKAGE_URI=""
+# Credentials go in scripts/.env (git-ignored):
+#   TAXII_USERNAME="<company id>"
+#   TAXII_PASSWORD="<api key>"        or  TAXII_PASSWORD_FILE="/path/to/file"
