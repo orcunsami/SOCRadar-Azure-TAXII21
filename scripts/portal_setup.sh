@@ -201,7 +201,7 @@ echo "=== Step 4: Verifying Storage ==="
 STORAGE_ACCOUNT=$(az storage account list --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --query "[?starts_with(name, 'srtaxii')].name" -o tsv 2>/dev/null | head -1)
 if [ -n "$STORAGE_ACCOUNT" ]; then
     echo "  Storage Account: $STORAGE_ACCOUNT"
-    TABLE_EXISTS=$(az storage table list --account-name "$STORAGE_ACCOUNT" --auth-mode login --query "[?name=='TAXIIState'].name" -o tsv 2>/dev/null || echo "")
+    TABLE_EXISTS=$(az storage table list --account-name "$STORAGE_ACCOUNT" --auth-mode key --query "[?name=='TAXIIState'].name" -o tsv 2>/dev/null || echo "")
     [ -n "$TABLE_EXISTS" ] && echo "  TAXIIState Table: OK" || { echo "  TAXIIState Table: MISSING (the template creates it; the deployment did not finish)"; exit 1; }
 else
     echo "  ERROR: No storage account found"; exit 1

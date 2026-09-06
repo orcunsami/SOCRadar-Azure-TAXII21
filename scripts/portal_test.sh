@@ -60,25 +60,33 @@ trigger_function() {
         -H "x-functions-key: $key" -H "Content-Type: application/json" -d '{}'
 }
 
+# The admin status endpoint returns {} on this host, so completion is read from
+# Application Insights instead: an invocation recorded after the trigger time.
+# Ingestion lags one to three minutes; the wait covers that.
+AI_APP=$(az resource list --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --resource-type Microsoft.Insights/components --query "[?starts_with(name, 'socradar-taxii-ai-')].name" -o tsv 2>/dev/null | head -1)
 wait_for_completion() {
-    local MAX_WAIT=${1:-300} INTERVAL=10 ELAPSED=0 key
-    key=$(master_key)
-    echo "  Waiting for function to complete (max ${MAX_WAIT}s)..."
-    sleep 15
-    ELAPSED=15
+    local MAX_WAIT=${1:-420} INTERVAL=20 ELAPSED=0 T0="$2" row
+    echo "  Waiting for an invocation after $T0 (max ${MAX_WAIT}s)..."
     while [ $ELAPSED -lt $MAX_WAIT ]; do
-        printf "\r  [%3ds] Running...   " $ELAPSED
-        local STATUS
-        STATUS=$(curl -s -H "x-functions-key: $key" \
-            "https://${FUNC_APP_NAME}.azurewebsites.net/admin/functions/socradar_taxii_import/status" 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('is_running', 'unknown'))" 2>/dev/null || echo "unknown")
-        if [ "$STATUS" = "False" ] || [ "$STATUS" = "false" ]; then
-            echo ""; echo "  Completed (${ELAPSED}s)"; return 0
-        fi
         sleep $INTERVAL
         ELAPSED=$((ELAPSED + INTERVAL))
+        row=$(az monitor app-insights query --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --app "$AI_APP" \
+            --analytics-query "requests | where name == 'socradar_taxii_import' and timestamp > datetime($T0) | order by timestamp asc | take 1 | project timestamp, success, duration=round(duration)" \
+            -o json 2>/dev/null | python3 -c 'import sys, json
+rows = json.load(sys.stdin)["tables"][0]["rows"]
+print("\t".join(str(c) for c in rows[0]) if rows else "")' 2>/dev/null)
+        if [ -n "$row" ]; then
+            echo ""; echo "  Invocation: $row (timestamp, success, ms)"
+            az monitor app-insights query --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --app "$AI_APP" \
+                --analytics-query "traces | where timestamp > datetime($T0) and message has 'Step 3: Import complete' | order by timestamp asc | take 1 | project message" \
+                -o json 2>/dev/null | python3 -c 'import sys, json
+rows = json.load(sys.stdin)["tables"][0]["rows"]
+print("  " + rows[0][0][:200] if rows else "  (Step 3 line not ingested yet)")' 2>/dev/null
+            return 0
+        fi
+        printf "\r  [%3ds] waiting...   " $ELAPSED
     done
-    echo ""; echo "  Timeout after ${MAX_WAIT}s (function may still be running)"
+    echo ""; echo "  No invocation seen within ${MAX_WAIT}s"
 }
 
 # Every SOCRadar TAXII indicator in the workspace, one externalId per line,
@@ -137,9 +145,10 @@ echo "  TI Indicators before: $COUNT_BEFORE"
 echo ""
 
 echo "=== Test 1: Trigger Import ==="
+T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HTTP_CODE=$(trigger_function)
 echo "  Triggered (HTTP $HTTP_CODE)"
-wait_for_completion 300
+wait_for_completion 420 "$T0"
 echo ""
 
 echo "=== Test 2: Checking TI Indicators ==="
@@ -157,9 +166,9 @@ STORAGE_ACCOUNT=$(az storage account list --subscription "$SUBSCRIPTION_ID" -g "
 CHECKPOINTS=0
 if [ -n "$STORAGE_ACCOUNT" ]; then
     echo "  Storage Account: $STORAGE_ACCOUNT"
-    CHECKPOINTS=$(az storage entity query --table-name "TAXIIState" --account-name "$STORAGE_ACCOUNT" --auth-mode login --query "items | length(@)" -o tsv 2>/dev/null || echo "0")
+    CHECKPOINTS=$(az storage entity query --table-name "TAXIIState" --account-name "$STORAGE_ACCOUNT" --auth-mode key --query "items | length(@)" -o tsv 2>/dev/null || echo "0")
     echo "  Checkpoint entries: $CHECKPOINTS"
-    az storage entity query --table-name "TAXIIState" --account-name "$STORAGE_ACCOUNT" --auth-mode login \
+    az storage entity query --table-name "TAXIIState" --account-name "$STORAGE_ACCOUNT" --auth-mode key \
         --query "items[].{Collection:PartitionKey, AddedAfter:AddedAfter, Cursor:Cursor, Pages:PagesFetched, LastRun:LastRun}" -o table 2>/dev/null || true
 else
     echo "  Storage Account: NOT FOUND"
@@ -167,9 +176,10 @@ fi
 echo ""
 
 echo "=== Test 4: Second Run (Checkpoint Test) ==="
+T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HTTP_CODE=$(trigger_function)
 echo "  Triggered (HTTP $HTTP_CODE)"
-wait_for_completion 300
+wait_for_completion 420 "$T0"
 COUNT_FINAL=$(ti_count)
 echo "  Indicators after 2nd run: $COUNT_FINAL (delta: $((COUNT_FINAL - COUNT_AFTER)))"
 # Dedup is proven by no STIX id appearing twice after two runs.
