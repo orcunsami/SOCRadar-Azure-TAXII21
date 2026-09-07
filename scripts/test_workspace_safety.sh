@@ -13,7 +13,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE="$REPO_ROOT/azuredeploy.json"
 
-SUBSCRIPTION="${TEST_SUBSCRIPTION:-00000000-0000-0000-0000-000000000000}"
+# No hardcoded subscription default: this script creates a resource group and
+# deletes it with --yes, so a stale default would run destructive commands
+# against whatever that id points at today. Use TEST_SUBSCRIPTION, or fall back
+# to the one you are logged in to, and fail loudly if neither resolves.
+SUBSCRIPTION="${TEST_SUBSCRIPTION:-$(az account show --query id -o tsv 2>/dev/null || true)}"
+if [ -z "$SUBSCRIPTION" ]; then
+    echo "ERROR: no subscription. Run 'az login' or set TEST_SUBSCRIPTION." >&2
+    exit 2
+fi
+echo "[0/6] Target subscription: $SUBSCRIPTION"
 LOCATION="${TEST_LOCATION:-westeurope}"
 RG="rg-workspace-safety-canary-taxii21"
 WS="workspace-safety-canary-taxii21"
