@@ -16,6 +16,7 @@ potential-app-taxii21.txt
 # a deployment from resetting an existing workspace's pricing tier.
 scripts/*
 !scripts/test_workspace_safety.sh
+!scripts/test_deploy_paths.sh
 !scripts/build_package.py
 !scripts/portal_setup.sh
 !scripts/portal_test.sh

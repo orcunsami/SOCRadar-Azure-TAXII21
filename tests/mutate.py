@@ -88,6 +88,27 @@ MUTATIONS = [
                 complete = False""","""                self.save_checkpoint(next_cursor or cursor, added_after, total_created, pages_fetched)
                 complete = False""",
   "tests/test_upload_failure_keeps_checkpoint.py"),
+ ("pointer reading removed", "azuredeploy.json",
+  '''staged() { [ \\"$(shape)\\" = blob ]; }; ''', '''''',
+  "tests/test_package_push.py"),
+ ("pointer echoed with its SAS", "azuredeploy.json",
+  '''staged() { [ \\"$(shape)\\" = blob ]; }; ''', '''staged() { echo \\"$(pointer)\\"; [ \\"$(shape)\\" = blob ]; }; ''',
+  "tests/test_package_push.py"),
+ ("settings read not retried", "azuredeploy.json",
+  '''for wait in $(seq 1 8); ''', '''for wait in $(seq 1 1); ''',
+  "tests/test_package_push.py"),
+ ("single push attempt", "azuredeploy.json",
+  '''for attempt in $(seq 1 6); ''', '''for attempt in $(seq 1 1); ''',
+  "tests/test_package_push.py"),
+ ("index poll cut to one minute", "azuredeploy.json",
+  '''for i in $(seq 1 40); ''', '''for i in $(seq 1 4); ''',
+  "tests/test_package_push.py"),
+ ("no restart after staging", "azuredeploy.json",
+  '''az functionapp restart ''', '''true restart ''',
+  "tests/test_package_push.py"),
+ ("container log deleted on failure", "azuredeploy.json",
+  '''"cleanupPreference": "OnSuccess"''', '''"cleanupPreference": "Always"''',
+  "tests/test_package_push.py"),
 ]
 blind=[]
 for name,path,old,new,test in MUTATIONS:

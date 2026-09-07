@@ -81,7 +81,67 @@ Set `WorkspaceResourceGroup` to the resource group that holds the workspace. Mic
 |-------|-------|
 | `LinkedResourceNotFound` / `ResourceNotFound` on the workspace | `WorkspaceName` does not exist in `WorkspaceResourceGroup` |
 | `AuthorizationFailed` on `deploy-workspace-resources` | no role-assignment rights on the workspace resource group |
+| `RoleAssignmentUpdateNotPermitted` on `deploy-workspace-resources` | a previous install against the same workspace left its role assignment behind -- see below |
 | `not onboarded` in the function log | Microsoft Sentinel is not enabled on that workspace |
+
+### Reinstalling cross-RG after deleting an install
+
+The **Microsoft Sentinel Contributor** assignment lives on the workspace, which is in a
+different resource group, so deleting the resource group you deployed to does not remove it.
+Its name is derived from the workspace and the identity's *name*, not the identity itself, so a
+reinstall tries to reuse that name with a new principal and Azure refuses.
+
+Find the leftover -- its principal is blank because the identity is gone:
+
+```bash
+WS=$(az monitor log-analytics workspace show -g <workspace-rg> -n <workspace> --query id -o tsv)
+az role assignment list --scope "$WS" -o json | python3 -c "
+import json,sys
+for a in json.load(sys.stdin):
+    if not a.get('principalName'): print(a['name'], a['roleDefinitionName'])"
+```
+
+Then remove it and redeploy:
+
+```bash
+az role assignment delete --ids "$WS/providers/Microsoft.Authorization/roleAssignments/<name>"
+```
+
+## How the code gets there
+
+The template creates the Function App empty (`WEBSITE_RUN_FROM_PACKAGE=1`) and a deployment
+script downloads `PackageUri`, verifies it is a readable zip, uploads it to the storage account
+this template creates, and points the app at that blob with a read-only token. Azure stopped
+accepting the creation of a Linux consumption Function App whose `WEBSITE_RUN_FROM_PACKAGE` is
+a URL that redirects, and a GitHub release download URL always redirects.
+
+One consequence worth knowing: **an installation keeps the package it was installed with.** The
+release URL is read once, at install time. A later release does not reach an existing
+installation -- redeploy to pick it up. Before September 2026 the app read that URL on every
+cold start, so a new release did arrive on its own.
+
+If the deployment fails at `triggerFirstRun`, the message says which step: an unreachable
+package URL, a download that is not a readable zip, a package that never reached the container
+the app reloads from, or an app that indexed no function within the poll window. The script
+retries the settings read until its role assignment is effective, retries the upload up to
+six times, and restarts the app once the package is staged -- writing the pointer alone was
+measured not to make the host reload it. If the deployment fails, the diagnostic container
+and its storage account stay in the resource group so the log can be read; delete them
+afterwards.
+
+It reports success only when both readings agree: the package pointer names a blob in the
+`function-releases` container **and** the app has indexed a function. The count alone is not
+enough -- an app whose package was staged somewhere else keeps reporting a function to Azure
+Resource Manager while its host answers 503 from the next restart onwards.
+
+A redeploy rewrites the package pointer, so it has to push again. If every attempt fails there,
+the deployment reports a failure **and the app is left with no code** -- it does not keep
+serving the package it had. Recovery does not need a rebuild: the previous package is still in
+the `function-releases` container of the app's storage account, and pointing
+`WEBSITE_RUN_FROM_PACKAGE` back at that blob brings the app back while you retry.
+Rotating the storage account keys invalidates the read token inside that pointer, so the app
+loses its code at the next restart -- issue a new token for the same blob and write the
+pointer back.
 
 ## What Gets Deployed
 
