@@ -13,9 +13,11 @@ changed in between. A green E2E from yesterday proves nothing about today.
 
 The supported shape, from the platform's own error message: create the app with
 WEBSITE_RUN_FROM_PACKAGE=1 and push the package with a zip deploy. The
-deploymentScript downloads PackageUri and calls `az functionapp deployment
-own staging step, which puts it in this template's storage account and
-rewrites the setting to a direct blob URL.
+deploymentScript downloads PackageUri and stages it itself: it uploads the zip
+as a blob in this template's own storage account and rewrites the setting to
+that blob's URL with a SAS token. (`az functionapp deployment source config-zip`
+was tried first and rejected: inside the container it takes the Kudu SCM path
+and leaves the pointer at "1".)
 
 These checks pin that shape. The one that is easy to lose is forceUpdateTag:
 without it a redeploy PUTs the site with the full appSettings list, resetting
@@ -140,6 +142,18 @@ for script in scripts:
     check(body.index("staged || {") < body.index("functionapp restart"),
           "azuredeploy.json: the restart is asked for before the package is known to be "
           "staged, so it would reload the old package")
+    # OnSuccess on its own is a one-hour promise: on failure the service waits for
+    # retentionInterval and then deletes the container, the storage and the script
+    # resource together. Measured on run 3c6f: endTime 18:42:05, expirationTime
+    # 19:42:05 -- exactly the PT1H that was in the template. A customer who deploys
+    # in the evening and asks in the morning would have nothing left to read.
+    ri = props.get("retentionInterval")
+    m_ri = re.match(r"^P(?:(\d+)D)?(?:T(\d+)H)?$", str(ri or ""))
+    hours = (int(m_ri.group(1) or 0) * 24 + int(m_ri.group(2) or 0)) if m_ri else 0
+    check(hours >= 26,
+          "azuredeploy.json: retentionInterval is %r - the failed deployment's container "
+          "and log are deleted when it expires; the documented ceiling is PT26H" % (ri,))
+
     check(props.get("cleanupPreference") == "OnSuccess",
           "azuredeploy.json: cleanupPreference is %r - with the default the container and "
           "its log are deleted the moment a customer's deployment fails, which is exactly "

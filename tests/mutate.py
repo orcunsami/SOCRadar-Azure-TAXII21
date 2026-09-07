@@ -109,6 +109,9 @@ MUTATIONS = [
  ("container log deleted on failure", "azuredeploy.json",
   '''"cleanupPreference": "OnSuccess"''', '''"cleanupPreference": "Always"''',
   "tests/test_package_push.py"),
+ ("failed run's evidence expires in an hour", "azuredeploy.json",
+  '''"retentionInterval": "PT26H"''', '''"retentionInterval": "PT1H"''',
+  "tests/test_package_push.py"),
 ]
 blind=[]
 for name,path,old,new,test in MUTATIONS:

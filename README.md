@@ -126,8 +126,9 @@ the app reloads from, or an app that indexed no function within the poll window.
 retries the settings read until its role assignment is effective, retries the upload up to
 six times, and restarts the app once the package is staged -- writing the pointer alone was
 measured not to make the host reload it. If the deployment fails, the diagnostic container
-and its storage account stay in the resource group so the log can be read; delete them
-afterwards.
+and its storage account stay in the resource group for 26 hours -- the documented ceiling --
+so the log can still be read the next morning; delete them once you are done. A successful
+deployment leaves neither behind.
 
 It reports success only when both readings agree: the package pointer names a blob in the
 `function-releases` container **and** the app has indexed a function. The count alone is not
@@ -142,6 +143,13 @@ the `function-releases` container of the app's storage account, and pointing
 Rotating the storage account keys invalidates the read token inside that pointer, so the app
 loses its code at the next restart -- issue a new token for the same blob and write the
 pointer back.
+
+One red row in **Resource group -> Deployments** is not ours and is harmless:
+`Failure-Anomalies-Alert-Rule-Deployment-*`. Azure creates it by itself when the
+Application Insights component appears, and it fails on a subscription that has
+not registered the `Microsoft.AlertsManagement` provider (measured 7 Sep 2026).
+Nothing in this template refers to it and the integration works without it;
+register that provider if you want the smart-detection alert.
 
 ## What Gets Deployed
 
