@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A wrong WorkspaceName must fail before anything is created.
 
-With DeployNewWorkspace=false -- the default, and the value a one-click deploy keeps -- and a
+With DeployNewWorkspace=false and a
 WorkspaceName that does not exist, this template used to create the checkpoint storage account, the user-assigned identity and the App Service Plan
 and only then fail with ResourceNotFound. Depending on the workspace resource did not help:
 ARM counts a resource whose `condition` is false as a satisfied dependency, so the
@@ -49,11 +49,15 @@ check(bool(resources), "azuredeploy.json: no resources - this check has gone bli
 check(any(r.get("type") == WS_TYPE for r in resources),
       "azuredeploy.json: no workspace resource - this check has gone blind")
 
-# The default has to stay false: a one-click deploy must not create or rewrite a workspace
-# unless the operator asks. That is also what makes the guard reachable at all.
-toggle = root.get("parameters", {}).get("DeployNewWorkspace", {})
-check(toggle.get("defaultValue") is False,
-      "azuredeploy.json: DeployNewWorkspace must default to false")
+# The default is true: a one-click deploy with a fresh name creates the workspace instead of
+# failing on it (the empty properties block means an existing one is never rewritten). The
+# toggle sits right under WorkspaceName so the portal form shows it there.
+params = root.get("parameters", {})
+toggle = params.get("DeployNewWorkspace", {})
+check(toggle.get("defaultValue") is True,
+      "azuredeploy.json: DeployNewWorkspace must default to true")
+check(list(params)[:2] == ["WorkspaceName", "DeployNewWorkspace"],
+      "azuredeploy.json: DeployNewWorkspace must be declared directly after WorkspaceName, found %s" % list(params)[:2])
 
 names = [GUARD] + ([GUARD2] if CROSS_RG else [])
 

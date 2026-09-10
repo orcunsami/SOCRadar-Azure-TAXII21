@@ -11,8 +11,8 @@
 # The path a customer actually clicks -- the defaults -- was never run.
 #
 # Five paths, each asserting a different thing:
-#   A  missing workspace, defaults        -> fails, resource group stays EMPTY
-#   B  same RG, DeployNewWorkspace=true   -> succeeds, guard SKIPPED
+#   A  missing workspace, DeployNewWorkspace=false -> fails, resource group stays EMPTY
+#   B  same RG, defaults (one click)      -> succeeds, guard SKIPPED
 #   C  existing onboarded workspace, cross-RG -> both guards SUCCEED and resolve
 #   D  redeploy against the workspace B made   -> the guard does not block it
 #   E  cross-RG onto a workspace with no Microsoft Sentinel -> rejected, nothing created
@@ -165,8 +165,8 @@ fi
 echo "      path C workspace: $EXT_RG / $EXT_WS"
 
 # --- A: the customer's typo, defaults left alone --------------------------------------
-echo "[2/6] Path A: missing workspace with the parameters at their defaults ..."
-deploy "$RG_APP" path-a WorkspaceName="$MISSING"
+echo "[2/6] Path A: missing workspace with DeployNewWorkspace=false ..."
+deploy "$RG_APP" path-a WorkspaceName="$MISSING" DeployNewWorkspace=false
 state=$(az deployment group show -g "$RG_APP" -n path-a --query properties.provisioningState -o tsv 2>/dev/null)
 left=$(az resource list -g "$RG_APP" --query "length(@)" -o tsv 2>/dev/null)
 blamed=$(failed_step "$RG_APP" path-a | grep -c 'precheck-workspace-exists')
@@ -183,8 +183,8 @@ blamed=$(failed_step "$RG_APP" path-a | grep -c 'precheck-workspace-exists')
     || row "A blames the precheck" FAIL "the precheck was not the failing step"
 
 # --- B: greenfield, the mode every earlier E2E used ------------------------------------
-echo "[3/6] Path B: DeployNewWorkspace=true in the same resource group ..."
-deploy "$RG_APP" path-b WorkspaceName="$WS" DeployNewWorkspace=true
+echo "[3/6] Path B: new workspace name, parameters at their defaults ..."
+deploy "$RG_APP" path-b WorkspaceName="$WS"
 state=$(az deployment group show -g "$RG_APP" -n path-b --query properties.provisioningState -o tsv 2>/dev/null)
 steps=$(failed_step "$RG_APP" path-b)
 [ "$state" = Succeeded ] \

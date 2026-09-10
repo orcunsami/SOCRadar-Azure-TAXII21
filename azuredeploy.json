@@ -17,9 +17,9 @@
         },
         "DeployNewWorkspace": {
             "type": "bool",
-            "defaultValue": false,
+            "defaultValue": true,
             "metadata": {
-                "description": "Create WorkspaceName instead of using an existing one. The workspace resource states no workspace-level settings, so leaving this false against an existing workspace never touches its pricing tier, retention or daily cap -- and setting it true by mistake is harmless for the same reason."
+                "description": "Create the Log Analytics workspace named WorkspaceName when it does not exist yet. Leave true for a one-click install. A workspace that already exists under this name is left as it is: the workspace resource states no workspace-level settings, so its pricing tier, retention and daily cap are never touched. Set false when the workspace must already exist; a misspelled name then fails before anything is created. Only honoured when WorkspaceResourceGroup is the deployment resource group. An existing workspace in a different region than WorkspaceLocation fails the deployment with InvalidResourceLocation before anything is created."
             }
         },
         "WorkspaceResourceGroup": {

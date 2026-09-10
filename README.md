@@ -29,7 +29,7 @@ If the workspace lives in another resource group, add `WorkspaceResourceGroup=<W
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
-| `DeployNewWorkspace` | No | `false` | Create `WorkspaceName` instead of using an existing one. Set `true` for a greenfield deploy into an empty resource group; leave `false` to attach to your existing workspace without touching its pricing tier, retention or daily cap. |
+| `DeployNewWorkspace` | No | `true` | Create `WorkspaceName` when it does not exist yet; an existing workspace under that name is left untouched (pricing tier, retention, daily cap). Set `false` when the workspace must already exist, so a misspelled name fails before anything is created. An existing workspace in another region than `WorkspaceLocation` fails with `InvalidResourceLocation`. |
 | `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
@@ -68,7 +68,7 @@ az monitor log-analytics workspace show -g <resource-group> -n <workspace> \
 If `lastSkuUpdate` lines up with when you deployed this integration and the tier isn't the one
 you picked, reset your commitment tier from **Log Analytics workspaces > Usage and estimated
 costs > Pricing tier**. The current template states no workspace-level settings at all, so
-redeploying -- even with `DeployNewWorkspace=true` set by mistake -- cannot change its pricing
+redeploying -- with `DeployNewWorkspace` at its default `true` -- cannot change its pricing
 tier, retention or daily cap.
 
 Redeploying over an installation made before September 2026 also adds a **Microsoft Sentinel Contributor** assignment scoped to the workspace; the earlier resource-group-scoped one stays and does no harm. Before that date revoked indicators were dropped instead of uploaded, so `IndicatorsRevoked` in older audit rows means "seen", not "uploaded".
