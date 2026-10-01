@@ -18,6 +18,21 @@ logging.disable(logging.CRITICAL)
 # without pulling the real package into the test environment.
 sys.modules.setdefault("requests", types.ModuleType("requests"))
 
+# Same for azure-core: the processor only needs the "entity not found" class.
+try:
+    from azure.core.exceptions import ResourceNotFoundError
+except ImportError:
+    class ResourceNotFoundError(Exception):
+        pass
+
+    _azure = sys.modules.setdefault("azure", types.ModuleType("azure"))
+    _core = types.ModuleType("azure.core")
+    _exceptions = types.ModuleType("azure.core.exceptions")
+    _exceptions.ResourceNotFoundError = ResourceNotFoundError
+    _core.exceptions = _exceptions
+    _azure.core = _core
+    sys.modules.update({"azure.core": _core, "azure.core.exceptions": _exceptions})
+
 FUNCTION_APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "FunctionApp")
 if FUNCTION_APP not in sys.path:
     sys.path.insert(0, FUNCTION_APP)
@@ -75,7 +90,7 @@ class FakeTable:
 
     def get_entity(self, partition_key, row_key):
         if self.entity is None:
-            raise KeyError("no checkpoint")
+            raise ResourceNotFoundError("no checkpoint")
         return self.entity
 
     def upsert_entity(self, entity):

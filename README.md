@@ -18,7 +18,7 @@ az deployment group create \
     WorkspaceName=<YOUR_WORKSPACE> \
     ApiRoots=radar_alpha,radar_gamma \
     CollectionIds=fd3fec42-efee-4353-85b2-cb87f9acc4ef,f260cf45-85ef-4f86-9542-763061f11d50 \
-    TAXIIUsername=<COMPANY_ID> \
+    TAXIIUsername=<TAXII_USERNAME> \
     TAXIIPassword=<API_KEY>
 ```
 
@@ -33,9 +33,9 @@ If the workspace lives in another resource group, add `WorkspaceResourceGroup=<W
 | `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
-| `TAXIIUsername` | Yes | - | SOCRadar Company ID |
+| `TAXIIUsername` | Yes | - | TAXII username issued by SOCRadar, e.g. `radar_330`, not the bare company ID |
 | `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
-| `PollingIntervalMinutes` | No | 60 | Polling interval (5-1440 min) |
+| `PollingIntervalMinutes` | No | 60 | Polling interval, 5-1440 min. Use a divisor of 60 for minutes or a divisor of 24 for whole hours; other values fire unevenly (45 runs at :00 and :45, 90 runs hourly). |
 | `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
 | `PackageUri` | No | published release | Function App deployment package. Leave the default unless you are testing a build before it is released. |
@@ -168,7 +168,7 @@ register that provider if you want the smart-detection alert.
 - Cursor-based pagination with per-collection checkpoint storage
 - Batch upload to Microsoft Sentinel TI (100 indicators/batch)
 - Per-collection error handling (one failure doesn't stop others)
-- Managed Identity authentication (no stored credentials for Azure)
+- Managed Identity access to Microsoft Sentinel, Table storage and Azure Monitor (the TAXII password and the storage key are stored as app settings)
 - Automatic first run after deployment
 
 ## Post-Deployment
@@ -223,7 +223,7 @@ SOCRadar_TAXII_Audit_CL
 | Status | Meaning |
 |--------|---------|
 | `Success` | Every page was fetched and every indicator reached Microsoft Sentinel. |
-| `PartialSuccess` | Some indicators did not reach Microsoft Sentinel. The run left its checkpoint where it was, so the next run fetches those pages again. `IndicatorsFailed` is the count. |
+| `PartialSuccess` | The run did not finish its collection, for one of two reasons. Some indicators did not reach Microsoft Sentinel: the run left its checkpoint where it was, so the next run fetches those pages again, and `IndicatorsFailed` is the count. Or the TAXII server sent `more=true` without a `next` cursor: the run stopped early, the checkpoint stayed where it was, and `IndicatorsFailed` can be 0. |
 | `Failed` | The collection could not be read at all. Nothing was checkpointed. `ErrorMessage` carries the reason. |
 
 `IndicatorsSkipped` is different from `IndicatorsFailed`. Skipped indicators
@@ -231,7 +231,9 @@ reached Microsoft Sentinel and were rejected by it, so fetching them again
 would change nothing. Failed indicators never arrived.
 
 A run that reports `PartialSuccess` repeatedly for the same collection is not
-recovering on its own. The import will keep re-fetching the same page rather
+recovering on its own. If `IndicatorsFailed` is 0, the server keeps sending
+`more=true` without a `next` cursor and the fault is on the TAXII server side.
+Otherwise the import will keep re-fetching the same page rather
 than skip past it, which is the intended trade: a delayed indicator is
 recoverable, a dropped one is not. Retries cover a transient 429 or 5xx from
 the upload API; a persistent 4xx needs the cause fixed. The
@@ -248,5 +250,4 @@ Learn more at [socradar.io](https://socradar.io)
 
 ## Support
 
-- **Documentation:** [docs.socradar.io](https://docs.socradar.io)
-- **Support:** support@socradar.io
+- **Support:** integration@socradar.io

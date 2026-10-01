@@ -7,6 +7,7 @@ function wrote Success and the loss became invisible. Status now has to follow
 the counters, not the absence of an exception.
 """
 
+import logging
 import os
 import sys
 import types
@@ -108,6 +109,49 @@ if rows:
     check("next run" in rows[0]["error_message"],
           "the audit row does not say the indicators will be retried: %r" % rows[0]["error_message"])
 
+# An incomplete run that lost nothing (the server sent more=true with no next
+# cursor) is still not a success, and its row must not claim lost indicators.
+stuck = dict(base, complete=False)
+rows = run_with(stuck, FakeDcrLogger())
+check(len(rows) == 1 and rows[0]["status"] == "PartialSuccess",
+      "an incomplete run reported %r" % (rows[0]["status"] if rows else None))
+if rows:
+    check("did not reach" not in rows[0]["error_message"],
+          "an incomplete run with nothing lost claims lost indicators: %r" % rows[0]["error_message"])
+    check("more data without a next cursor" in rows[0]["error_message"],
+          "the audit row does not say why the run stopped: %r" % rows[0]["error_message"])
+
+# The Step 3 summary log must follow the same rule as the audit row: it only
+# says "did not reach Microsoft Sentinel" when indicators were actually lost.
+class Capture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
+def summary_logs(result):
+    handler = Capture()
+    logging.disable(logging.NOTSET)  # the harness silences logging
+    logging.getLogger("function_app").addHandler(handler)
+    try:
+        run_with(result, FakeDcrLogger())
+    finally:
+        logging.getLogger("function_app").removeHandler(handler)
+        logging.disable(logging.CRITICAL)
+    return " | ".join(handler.lines)
+
+
+text = summary_logs(stuck)
+check("did not reach" not in text,
+      "the Step 3 log claims lost indicators when none were lost: %r" % text)
+check("partial" in text, "the Step 3 log does not flag the partial collection: %r" % text)
+text = summary_logs(lost)
+check("2 indicator(s) did not reach" in text,
+      "the Step 3 log does not report the 2 lost indicators: %r" % text)
+
 # A partial collection must not raise: some indicators did land, and raising
 # would mark the whole timer run failed and hide the ones that succeeded.
 try:
@@ -119,4 +163,4 @@ if failures:
     for line in failures:
         print("FAIL " + line)
     sys.exit(1)
-print("audit status follows the counters, not the absence of an exception: OK (7 checks)")
+print("audit status follows the counters, not the absence of an exception: OK (13 checks)")

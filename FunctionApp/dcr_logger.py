@@ -52,7 +52,11 @@ class DcrLogger:
             "Authorization": "Bearer {}".format(token),
             "Content-Type": "application/json",
         }
-        resp = requests.post(url, headers=headers, json=data, timeout=30)
+        try:
+            resp = requests.post(url, headers=headers, json=data, timeout=30)
+        except Exception as e:
+            logger.warning("DCR ingestion failed: %s", e)
+            return
         if resp.status_code not in (200, 204):
             logger.warning("DCR ingestion failed: %d %s", resp.status_code, resp.text[:200])
         else:

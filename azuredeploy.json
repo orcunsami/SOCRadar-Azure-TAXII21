@@ -1,12 +1,12 @@
 {
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-    "contentVersion": "1.0.0.0",
+    "contentVersion": "1.0.0",
     "metadata": {
         "title": "SOCRadar TAXII 2.1 for Microsoft Sentinel",
         "description": "Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel using Azure Functions. Supports multiple collections, cursor-based pagination, checkpoint/resume, and batch upload.",
         "version": "1.0.0",
         "author": "SOCRadar",
-        "lastUpdateTime": "2026-09-06T00:00:00.000Z"
+        "lastUpdateTime": "2026-10-01T00:00:00.000Z"
     },
     "parameters": {
         "WorkspaceName": {
@@ -51,7 +51,7 @@
         "TAXIIUsername": {
             "type": "string",
             "metadata": {
-                "description": "TAXII server username (SOCRadar Company ID)"
+                "description": "TAXII server username issued by SOCRadar, e.g. radar_330, not the bare company ID"
             }
         },
         "TAXIIPassword": {
@@ -139,7 +139,7 @@
                 },
                 "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-                    "contentVersion": "1.0.0.0",
+                    "contentVersion": "1.0.0",
                     "parameters": {
                         "WorkspaceResourceId": {
                             "type": "string"
@@ -173,7 +173,7 @@
                 },
                 "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-                    "contentVersion": "1.0.0.0",
+                    "contentVersion": "1.0.0",
                     "parameters": {
                         "WorkspaceResourceId": {
                             "type": "string"
@@ -375,7 +375,7 @@
                 },
                 "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-                    "contentVersion": "1.0.0.0",
+                    "contentVersion": "1.0.0",
                     "resources": [
                         {
                             "condition": "[parameters('EnableAuditLogging')]",

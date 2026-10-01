@@ -113,9 +113,13 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
             if lost or not result["complete"]:
                 collections_partial += 1
                 status = "PartialSuccess"
-                message = ("{} indicator(s) did not reach Microsoft Sentinel; the "
-                           "checkpoint was left in place and they will be fetched "
-                           "again on the next run").format(lost)
+                if lost:
+                    message = ("{} indicator(s) did not reach Microsoft Sentinel; the "
+                               "checkpoint was left in place and they will be fetched "
+                               "again on the next run").format(lost)
+                else:
+                    message = ("the TAXII server reported more data without a next "
+                               "cursor; the run stopped early")
                 logger.error("Step 2: %s/%s PARTIAL - %s", api_root, collection_id[:8], message)
             else:
                 collections_succeeded += 1
@@ -180,11 +184,12 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                      collections_failed, "; ".join(errors))
 
     if collections_partial > 0:
-        logger.error(
-            "Step 3: %d collection(s) partial - %d indicator(s) did not reach "
-            "Microsoft Sentinel and will be retried on the next run",
-            collections_partial, total_failed
-        )
+        logger.error("Step 3: %d collection(s) partial", collections_partial)
+        if total_failed > 0:
+            logger.error(
+                "Step 3: %d indicator(s) did not reach Microsoft Sentinel and "
+                "will be retried on the next run", total_failed
+            )
 
     logger.info("=== SOCRadar TAXII Import finished (%dms) ===", elapsed_ms)
 

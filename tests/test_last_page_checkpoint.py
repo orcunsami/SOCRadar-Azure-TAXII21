@@ -68,8 +68,34 @@ stub = FakeRequests(get_responses=[Response(200, page(["5.5.5.5"], more=False), 
 make_processor(stub, table=table, sleeps=[]).run()
 check(table.upserts and table.upserts[-1]["Cursor"] == "cursor-9", "a failed last page moved the checkpoint: %r" % table.upserts)
 
+# 5. more=true with no next cursor is a server fault. The same page would be
+#    fetched and re-uploaded until the time budget ran out, so the run stops
+#    after one request and says it did not finish.
+table = FakeTable(entity={"Cursor": "", "AddedAfter": "2026-09-06T05:27:54.000Z"})
+stub = FakeRequests(get_responses=[Response(200, page(["6.6.6.6"], more=True, next_cursor=""),
+                                            headers={"X-TAXII-Date-Added-Last": LAST})],
+                    post_responses=OK)
+try:
+    result = make_processor(stub, table=table, sleeps=[]).run()
+except AssertionError as exc:
+    result = {}
+    check(False, "more=true without next kept refetching the page: %s" % exc)
+check(len(stub.get_calls) == 1, "more=true without next fetched %d times" % len(stub.get_calls))
+check(result.get("complete") is False, "a run stuck on more=true without next reported complete: %r" % result)
+
+# 5b. Same fault on the very first run, with no checkpoint row and a lookback
+#     window. Stopping without writing leaves no row, so the next run would
+#     start from its own clock minus the window and step over the older
+#     indicators beyond page 1. The stop saves added_after like a failed page.
+table = FakeTable(entity=None)
+stub = FakeRequests(get_responses=[Response(200, page(["7.7.7.7"], more=True, next_cursor=""))], post_responses=OK)
+result = make_processor(stub, table=table, sleeps=[], initial_lookback_hours=48).run()
+check(result.get("complete") is False, "first run stuck on more=true without next reported complete: %r" % result)
+check(len(table.upserts) == 1 and table.upserts[-1]["AddedAfter"] and table.upserts[-1]["Cursor"] == "",
+      "more=true without next on a first run wrote no pinned checkpoint: %r" % table.upserts)
+
 if failures:
     for line in failures:
         print("FAIL " + line)
     sys.exit(1)
-print("the last page is not re-uploaded on later runs: OK (%d checks)" % 6)
+print("the last page is not re-uploaded on later runs: OK (%d checks)" % 11)

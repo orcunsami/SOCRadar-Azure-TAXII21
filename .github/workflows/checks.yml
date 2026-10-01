@@ -44,8 +44,16 @@ jobs:
             exit 1
           fi
           rm -f .calibration-probe
+          # SOCRadar API keys are 64 hex characters; calibrate that pattern on its own.
+          printf 'key = "%s"\n' "$(printf 'ab%.0s' $(seq 1 32))" > .calibration-probe
+          if ! grep -rIE '\b[0-9a-fA-F]{64}\b' . --exclude-dir=.git >/dev/null; then
+            echo "scan is blind to 64-hex keys - it cannot see the calibration probe"
+            rm -f .calibration-probe
+            exit 1
+          fi
+          rm -f .calibration-probe
           echo "  calibration ok"
-          if grep -rIE 'sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----' . --exclude-dir=.git; then
+          if grep -rIE 'sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|\b[0-9a-fA-F]{64}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----' . --exclude-dir=.git; then
             echo "secret pattern found in tracked content"
             exit 1
           fi

@@ -112,6 +112,34 @@ MUTATIONS = [
  ("failed run's evidence expires in an hour", "azuredeploy.json",
   '''"retentionInterval": "PT26H"''', '''"retentionInterval": "PT1H"''',
   "tests/test_package_push.py"),
+ ("checkpoint read error swallowed","FunctionApp/taxii_processor.py",
+  '''        except ResourceNotFoundError:''','''        except Exception:''',
+  "tests/test_checkpoint_read.py"),
+ ("more without next keeps looping","FunctionApp/taxii_processor.py",
+  '''            if more and not next_cursor:''','''            if False:''',
+  "tests/test_last_page_checkpoint.py"),
+ ("more without next writes no checkpoint","FunctionApp/taxii_processor.py",
+  '''                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
+                complete = False
+                break
+
+            # Update cursor.''','''                complete = False
+                break
+
+            # Update cursor.''',
+  "tests/test_last_page_checkpoint.py"),
+ ("incomplete run claims lost indicators","FunctionApp/function_app.py",
+  '''                if lost:''','''                if True:''',
+  "tests/test_audit_status.py"),
+ ("step 3 log claims lost indicators","FunctionApp/function_app.py",
+  '''        if total_failed > 0:''','''        if True:''',
+  "tests/test_audit_status.py"),
+ ("audit post not guarded","FunctionApp/dcr_logger.py",
+  '''        except Exception as e:
+            logger.warning("DCR ingestion failed: %s", e)
+            return''','''        except ZeroDivisionError as e:
+            return''',
+  "tests/test_audit_post_failure.py"),
 ]
 blind=[]
 for name,path,old,new,test in MUTATIONS:

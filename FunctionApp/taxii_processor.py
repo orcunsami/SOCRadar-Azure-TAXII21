@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
 import requests
+from azure.core.exceptions import ResourceNotFoundError
 
 from stix_parser import prepare_for_sentinel
 
@@ -122,7 +123,11 @@ class TaxiiProcessor:
         return True
 
     def get_checkpoint(self) -> dict:
-        """Get saved cursor and added_after from Azure Table Storage."""
+        """Get saved cursor and added_after from Azure Table Storage.
+
+        Only a missing entity means "first run". Any other failure raises, so
+        a transient storage error cannot restart the collection from 1970.
+        """
         try:
             entity = self.table_client.get_entity(
                 partition_key=self._checkpoint_key(), row_key="state"
@@ -131,7 +136,7 @@ class TaxiiProcessor:
                 "cursor": entity.get("Cursor", ""),
                 "added_after": entity.get("AddedAfter", "1970-01-01T00:00:00Z"),
             }
-        except Exception:
+        except ResourceNotFoundError:
             return {"cursor": "", "added_after": "1970-01-01T00:00:00Z"}
 
     def save_checkpoint(self, cursor, added_after, total_indicators, pages_fetched):
@@ -313,6 +318,18 @@ class TaxiiProcessor:
                 # next run would start its lookback window from its own clock
                 # and step over the oldest indicators on the page that just
                 # failed. Saving pins added_after where this run started.
+                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
+                complete = False
+                break
+
+            # more=true with no cursor cannot be continued: the same request
+            # would return the same page until the time budget ran out.
+            if more and not next_cursor:
+                logger.error("Page %d: server sent more=true without a next cursor, "
+                             "stopping this run", page_num)
+                # Written like the failed-page stop above: without a row, a
+                # first run's next attempt would restart its lookback window
+                # from a later clock and skip older indicators past this page.
                 self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
                 complete = False
                 break

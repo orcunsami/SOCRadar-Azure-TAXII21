@@ -223,5 +223,5 @@ print("\n".join("  - %s" % f for f in failures))
 if failures:
     print("%d problem(s) in %d checks." % (len(failures), checks))
     sys.exit(1)
-print("package push: created with \"1\", pushed by zip deploy, re-pushed on redeploy "
+print("package push: created with \"1\", staged as a blob, re-pushed on redeploy "
       "(%d checks)" % checks)

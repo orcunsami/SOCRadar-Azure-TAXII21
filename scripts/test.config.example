@@ -15,5 +15,5 @@ ENABLE_AUDIT_LOGGING="true"
 # Optional: test a package that is not released yet (blob URL with a read SAS)
 PACKAGE_URI=""
 # Credentials go in scripts/.env (git-ignored):
-#   TAXII_USERNAME="<company id>"
+#   TAXII_USERNAME="<radar_id>"
 #   TAXII_PASSWORD="<api key>"        or  TAXII_PASSWORD_FILE="/path/to/file"

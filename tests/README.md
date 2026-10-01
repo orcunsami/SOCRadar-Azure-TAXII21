@@ -16,7 +16,13 @@ would never see.
 | `test_upload_failure_keeps_checkpoint.py` | An upload that never reached Microsoft Sentinel must not move the checkpoint. Losing that guarantee loses indicators permanently and silently. |
 | `test_retry_policy.py` | Retries are bounded, honour `Retry-After`, cap the wait, skip statuses that will never succeed, and refuse to sleep past the run's time budget. |
 | `test_audit_schema.py` | Every audit field the code sends is declared in both the data collection rule and the Log Analytics table. An undeclared column is dropped without an error. |
-| `test_audit_status.py` | A run that lost indicators reports `PartialSuccess`, not `Success`, and does not raise. |
+| `test_audit_status.py` | A run that lost indicators, or stopped early, reports `PartialSuccess`, not `Success`, and does not raise. |
+| `test_audit_post_failure.py` | A failed audit post does not raise, so it cannot turn a finished import into a failed collection. |
+| `test_checkpoint_read.py` | An unreadable checkpoint stops the run; only a missing one counts as a first run. |
+| `test_last_page_checkpoint.py` | The last page is not re-fetched on every run, and `more=true` with no `next` cursor stops instead of looping. |
+| `test_revoked_upload.py` | Revoked indicators are sent flagged as revoked, and counted separately. |
+| `test_package_push.py` | The package is staged as a blob and re-pushed on redeploy. |
+| `test_workspace_precheck.py` | The workspace pre-check exists, can fail, and runs before anything is created. |
 
 `_harness.py` holds the stubs. The Function App only talks to the outside world
 through `requests`, so replacing that one module drives every path, including
@@ -36,8 +42,8 @@ thing each one guards and confirm it goes red:
 
 ## mutate.py
 
-`python3 tests/mutate.py` breaks the code on purpose, ten times, and checks that
-the matching test file fails each time. A mutation that survives is reported as
+`python3 tests/mutate.py` breaks the code on purpose, once per entry in its
+`MUTATIONS` list, and checks that the matching test file fails each time. A mutation that survives is reported as
 BLIND and the run exits non-zero: that means the gate is decorative, not that
 the code is fine.
 
