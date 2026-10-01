@@ -140,6 +140,59 @@ MUTATIONS = [
             return''','''        except ZeroDivisionError as e:
             return''',
   "tests/test_audit_post_failure.py"),
+ ("budget pause not reported by processor","FunctionApp/taxii_processor.py",
+  '''                    paused = True
+                    break''','''                    paused = False
+                    break''',
+  "tests/test_budget_pause.py"),
+ ("budget pause not written to audit row","FunctionApp/function_app.py",
+  '''                if result.get("paused"):''','''                if False:''',
+  "tests/test_audit_status.py"),
+ ("checkpoint not saved after a page","FunctionApp/taxii_processor.py",
+  '''            self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
+            logger.info("Checkpoint saved after page %d", page_num)''','''            logger.info("Checkpoint saved after page %d", page_num)''',
+  "tests/test_budget_pause.py"),
+ ("harness dedup assert disabled","scripts/portal_test.sh",
+  '''if [ "$NOW" != "$BASE" ]; then''','''if false; then''',
+  "tests/test_portal_dedup.py"),
+ ("harness unseen run counts as a run","scripts/portal_test.sh",
+  '''seen within ${MAX_WAIT}s"
+    return 1''','''seen within ${MAX_WAIT}s"
+    return 0''',
+  "tests/test_portal_dedup.py"),
+ ("harness unreadable read counts as zero","scripts/portal_test.sh",
+  '''        printf 'UNREADABLE'
+    fi''','''        printf '0 0'
+    fi''',
+  "tests/test_portal_dedup.py"),
+ ("harness skips the catch-up drain","scripts/portal_test.sh",
+  '''[ $DRAIN -lt "${DRAIN_MAX:-6}" ]''','''[ $DRAIN -lt 0 ]''',
+  "tests/test_portal_dedup.py"),
+ ("harness accepts an empty baseline","scripts/portal_test.sh",
+  '''        0\\ *) CHECKPOINT_OK="FAIL (no indicator rows in Log Analytics, nothing to dedup against)" ;;
+''','''''',
+  "tests/test_portal_dedup.py"),
+ ("harness failed run counts as a run","scripts/portal_test.sh",
+  '''if [ "$ok" != "True" ]; then''','''if false; then''',
+  "tests/test_portal_dedup.py"),
+ ("harness ignores the Step 3 verdict","scripts/portal_test.sh",
+  '''step3_clean "$step3" && return 0''','''return 0''',
+  "tests/test_portal_dedup.py"),
+ ("harness checks run 2 only","scripts/portal_test.sh",
+  '''for n in 2 3; do''','''for n in 2; do''',
+  "tests/test_portal_dedup.py"),
+ ("harness unreadable checkpoint passes","scripts/portal_test.sh",
+  '''CHECKPOINT_OK="FAIL (checkpoint table unreadable)"''','''CHECKPOINT_OK="PASS"''',
+  "tests/test_portal_dedup.py"),
+ ("harness not-caught-up passes","scripts/portal_test.sh",
+  '''CHECKPOINT_OK="SKIPPED (collection not caught up after $DRAIN catch-up runs)"''','''CHECKPOINT_OK="PASS"''',
+  "tests/test_portal_dedup.py"),
+ ("harness refused trigger counts as a run","scripts/portal_test.sh",
+  '''case "$code" in 200|202) ;; *) return 1 ;; esac''','''case "$code" in 200|202) ;; *) ;; esac''',
+  "tests/test_portal_dedup.py"),
+ ("harness settles on the first read","scripts/portal_test.sh",
+  '''if [ "$cur" != "UNREADABLE" ] && [ "$cur" = "$prev" ]; then''','''if [ "$cur" != "UNREADABLE" ]; then''',
+  "tests/test_portal_dedup.py"),
 ]
 blind=[]
 for name,path,old,new,test in MUTATIONS:

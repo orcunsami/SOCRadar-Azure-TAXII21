@@ -121,6 +121,22 @@ if rows:
     check("more data without a next cursor" in rows[0]["error_message"],
           "the audit row does not say why the run stopped: %r" % rows[0]["error_message"])
 
+# A run that paused on its time budget is catching up, not failing: Status stays
+# Success (the Content Hub loss rule alerts on anything else), but the row must
+# say work is pending, or catch-up is indistinguishable from a finished run.
+paused = dict(base, pages_fetched=24, paused=True)
+rows = run_with(paused, FakeDcrLogger())
+check(len(rows) == 1 and rows[0]["status"] == "Success",
+      "a budget pause reported %r, it must stay Success" % (rows[0]["status"] if rows else None))
+if rows:
+    check("time budget reached after 24 pages" in rows[0]["error_message"]
+          and "pending" in rows[0]["error_message"]
+          and "continues next run" in rows[0]["error_message"],
+          "the audit row does not say the run paused with data pending: %r" % rows[0]["error_message"])
+rows = run_with(base, FakeDcrLogger())
+check(rows and rows[0]["error_message"] == "",
+      "a finished run carries a message: %r" % (rows[0]["error_message"] if rows else None))
+
 # The Step 3 summary log must follow the same rule as the audit row: it only
 # says "did not reach Microsoft Sentinel" when indicators were actually lost.
 class Capture(logging.Handler):
@@ -163,4 +179,4 @@ if failures:
     for line in failures:
         print("FAIL " + line)
     sys.exit(1)
-print("audit status follows the counters, not the absence of an exception: OK (13 checks)")
+print("audit status follows the counters, not the absence of an exception: OK (16 checks)")

@@ -125,6 +125,14 @@ def socradar_taxii_import(timer: func.TimerRequest) -> None:
                 collections_succeeded += 1
                 status = "Success"
                 message = ""
+                if result.get("paused"):
+                    # Catch-up is normal, so the Status stays Success; the
+                    # message is what tells it apart from a finished run. The
+                    # server does not say how many pages remain, so none is
+                    # claimed.
+                    message = ("time budget reached after {} pages, more pages pending, "
+                               "continues next run").format(result["pages_fetched"])
+                    logger.info("Step 2: %s/%s %s", api_root, collection_id[:8], message)
                 logger.info("Step 2: %s/%s done - %d created, %dms",
                             api_root, collection_id[:8],
                             result["indicators_created"], collection_ms)

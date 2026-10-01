@@ -233,6 +233,7 @@ class TaxiiProcessor:
 
         page_num = 0
         complete = True
+        paused = False
         while True:
             page_num += 1
             if cursor:
@@ -359,6 +360,9 @@ class TaxiiProcessor:
                 if elapsed >= self.time_budget_seconds:
                     logger.info("Time budget exhausted (%.0fs/%.0fs), pausing for next run",
                                 elapsed, self.time_budget_seconds)
+                    # Only reached with more=true and a cursor: the checkpoint
+                    # saved above already points at the next page.
+                    paused = True
                     break
 
         logger.info(
@@ -380,4 +384,5 @@ class TaxiiProcessor:
             "pages_fetched": pages_fetched,
             "type_stats": type_stats,
             "complete": complete,
+            "paused": paused,
         }

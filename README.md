@@ -173,7 +173,9 @@ register that provider if you want the smart-detection alert.
 
 ## Post-Deployment
 
-The function automatically runs after deployment via a deployment script. By default, the first run fetches indicators from the last 48 hours. Set `InitialLookbackHours=0` to fetch all history (large collections sync incrementally via checkpoints). Subsequent runs poll on the configured schedule. Only new indicators are imported (cursor-based deduplication per collection).
+The function automatically runs after deployment via a deployment script. By default, the first run fetches indicators from the last 48 hours. Set `InitialLookbackHours=0` to fetch all history (large collections sync incrementally via checkpoints). Subsequent runs poll on the configured schedule. Each collection keeps a checkpoint (cursor, then `added_after`) and the next run continues from it, so a page that loaded is not fetched again. A page that failed to load, or a run that stopped early (see `PartialSuccess` below), leaves the checkpoint where it was and that page is fetched again on the next run.
+
+A run has a time budget of nine minutes, split across the collections. A first run with the default 48 hour lookback can be longer than that. It then pauses, keeps its place in the checkpoint and continues on the next run; the audit row says so (see `Status` below).
 
 ### Managing Collections
 
@@ -209,6 +211,15 @@ Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-co
 - **Microsoft Sentinel > Threat Intelligence** blade
 - **Log Analytics > Logs** with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
 
+**The same indicator more than once.** The checkpoint stops runs from re-fetching, but inside one fetch the TAXII server can send the same indicator on several pages (measured 1 Oct 2026 on one collection: 3552 indicator objects for 1268 distinct STIX ids, 2.8 times each). The import does not collapse them: every copy is uploaded. So `IndicatorsCreated` counts uploads Microsoft Sentinel accepted, not distinct indicators, and `ThreatIntelIndicators` in Log Analytics is an append log with one row per upload. `count()` over it overstates, and the workbook tiles that use `count()` (Indicators by Type, by Source, over time) count rows. For the number of different indicators count the ids:
+
+```kql
+ThreatIntelIndicators
+| where SourceSystem == "SOCRadar TAXII"
+| summarize Rows = count() by Id
+| summarize Rows = sum(Rows), DistinctIndicators = count()
+```
+
 **Revoked indicators.** When SOCRadar withdraws an indicator, the TAXII feed carries the object again with `revoked: true`. The import uploads it like any other indicator, so Microsoft Sentinel stores the revoked flag and stops matching on it. `IndicatorsRevoked` in the audit table counts the revoked indicators Microsoft Sentinel accepted in that run.
 
 **Audit logs** (if enabled) are stored in the `SOCRadar_TAXII_Audit_CL` custom table. Each import run creates one record per collection with indicators created, skipped, failed and revoked, duration, and status. Query with:
@@ -222,9 +233,17 @@ SOCRadar_TAXII_Audit_CL
 
 | Status | Meaning |
 |--------|---------|
-| `Success` | Every page was fetched and every indicator reached Microsoft Sentinel. |
+| `Success` | Every indicator fetched reached Microsoft Sentinel. When the run paused on its time budget, `ErrorMessage` reads `time budget reached after N pages, more pages pending, continues next run`: the collection is still catching up and the checkpoint points at the next page. The server does not say how many pages remain, so none is claimed. Catching up is normal and not an alert, which is why the status stays `Success`. An empty `ErrorMessage` means the collection is caught up. |
 | `PartialSuccess` | The run did not finish its collection, for one of two reasons. Some indicators did not reach Microsoft Sentinel: the run left its checkpoint where it was, so the next run fetches those pages again, and `IndicatorsFailed` is the count. Or the TAXII server sent `more=true` without a `next` cursor: the run stopped early, the checkpoint stayed where it was, and `IndicatorsFailed` can be 0. |
 | `Failed` | The collection could not be read at all. Nothing was checkpointed. `ErrorMessage` carries the reason. |
+
+To list the collections that are still catching up:
+
+```kql
+SOCRadar_TAXII_Audit_CL
+| where ErrorMessage has "time budget reached"
+| order by TimeGenerated desc
+```
 
 `IndicatorsSkipped` is different from `IndicatorsFailed`. Skipped indicators
 reached Microsoft Sentinel and were rejected by it, so fetching them again
