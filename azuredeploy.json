@@ -183,7 +183,7 @@
                     "outputs": {
                         "sentinelOnboarded": {
                             "type": "string",
-                            "value": "[reference(concat(parameters('WorkspaceResourceId'), '/providers/Microsoft.SecurityInsights/onboardingStates/default'), '2023-02-01', 'Full').id]"
+                            "value": "[reference(extensionResourceId(parameters('WorkspaceResourceId'), 'Microsoft.SecurityInsights/onboardingStates', 'default'), '2023-02-01', 'Full').id]"
                         }
                     }
                 }

@@ -12,6 +12,7 @@ run in parallel: each one starts the script in its own temp dir.
 
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -35,12 +36,19 @@ elif "identity show" in line: print("pid")
 elif "role assignment list" in line: print("Microsoft Sentinel Contributor")
 elif "resource list" in line: print("socradar-taxii-ai-test")
 elif "app-insights query" in line:
-    if "traces" in line:
+    if "traces" in line and "time budget reached" in line:
+        rows = [["Step 2: x time budget reached after 85 pages, more pages pending, continues next run"]] if st.get("paused_last") else []
+    elif "traces" in line:
         ok = "Step 3: Import complete - 30 created, 0 skipped, 0 failed, 0 revoked, 2 pages, 1/1 collections succeeded, 0 partial, 1000ms"
         bad = "Step 3: Import complete - 30 created, 0 skipped, 5 failed, 0 revoked, 2 pages, 0/1 collections succeeded, 1 partial, 1000ms"
         rows = [] if mode == "no_step3" else [[bad if mode == "step3_failed" else ok]]
     elif mode == "unseen": rows = []
-    else: rows = [["2026-10-01T00:00:00Z", mode != "run_failed", 1000]]
+    else:
+        # A run that takes run_seconds: the script polls every 20 s (sleep is a no-op here, so count polls)
+        st["polls"] = st.get("polls", 0) + 1
+        json.dump(st, open(os.environ["FAKE_STATE"], "w"))
+        if st["polls"] * 20 < st["run_seconds"] or (mode == "flag_unseen" and st["runs"] >= 2) or (mode == "flag_unseen_once" and st["runs"] == 2): rows = []
+        else: rows = [["2026-10-01T00:00:00Z", mode != "run_failed", 1000]]
     print(json.dumps({"tables": [{"rows": rows}]}))
 elif "log-analytics workspace show" in line: print("cid")
 elif "log-analytics query" in line:
@@ -75,6 +83,7 @@ mode = st["mode"]; n = st["runs"] + 1; st["runs"] = n
 if mode == "http500":
     json.dump(st, open(path, "w")); sys.stdout.write("500"); sys.exit(0)
 st["stale"] = [st["rows"], st["ids"]]; st["lag"] = 1 if st.get("lagging") else 0
+st["polls"] = 0
 if mode == "paused":
     if n == 1: st.update(rows=st["rows"] + 20, ids=7, cursor_open=1, table=True)
     elif n == 2: st.update(rows=st["rows"] + 10, ids=10, cursor_open=0)
@@ -86,8 +95,12 @@ elif mode == "never_caught_up":
     st.update(rows=st["rows"] + 10, ids=10, cursor_open=1, table=True)
 elif mode == "dead":   # a product that loads nothing, ever
     st.update(table=True)
+elif mode in ("flag_only", "flag_unseen", "flag_unseen_once"):   # run 1 pauses but the checkpoint shows no cursor; run 2 (catch-up) loads the rest
+    if n == 1: st.update(rows=st["rows"] + 20, ids=7, table=True)
+    elif n == 2: st.update(rows=st["rows"] + 10, ids=10)
 else:  # good, unseen, unreadable_*, run_failed, step3_failed, no_step3, cp_unreadable: run 1 loads, later runs load nothing
     if n == 1: st.update(rows=st["rows"] + 30, ids=10, table=True)
+st["paused_last"] = bool(st["cursor_open"]) or (mode in ("flag_only", "flag_unseen", "flag_unseen_once") and n == 1)
 json.dump(st, open(path, "w"))
 sys.stdout.write("202")
 '''
@@ -103,7 +116,7 @@ def check(condition, message):
         failures.append(message)
 
 
-def run(mode, table=True, lagging=False, rows0=0, ids0=0):
+def run(mode, table=True, lagging=False, rows0=0, ids0=0, run_seconds=0):
     with tempfile.TemporaryDirectory() as tmp:
         bin_dir = os.path.join(tmp, "bin")
         os.makedirs(bin_dir)
@@ -114,7 +127,7 @@ def run(mode, table=True, lagging=False, rows0=0, ids0=0):
             os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
         state = os.path.join(tmp, "state.json")
         json.dump({"mode": mode, "runs": 0, "rows": rows0, "ids": ids0, "cursor_open": 0, "table": table,
-                   "lagging": lagging}, open(state, "w"))
+                   "lagging": lagging, "run_seconds": run_seconds}, open(state, "w"))
         env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"], FAKE_STATE=state,
                    SUBSCRIPTION_ID="sub", RESOURCE_GROUP="rg", WORKSPACE_NAME="ws",
                    ENABLE_AUDIT_LOGGING="false")
@@ -132,6 +145,12 @@ def verdict(out):
 SCENARIOS = {
     "good": dict(mode="good", table=False),
     "paused": dict(mode="paused"),
+    # a run that lasts its whole 9 minute budget (543 s, plus the Application Insights lag of up to 3 minutes): the default 48 hour lookback
+    "slow_paused": dict(mode="paused", run_seconds=543 + 180),
+    "slow_flag": dict(mode="flag_only", run_seconds=543 + 180),
+    "flag_only": dict(mode="flag_only"),
+    "flag_unseen": dict(mode="flag_unseen"),
+    "flag_unseen_once": dict(mode="flag_unseen_once"),
     "broken": dict(mode="broken"),
     "unseen": dict(mode="unseen"),
     "unreadable_after": dict(mode="unreadable_after"),
@@ -165,6 +184,28 @@ rc, out = R["paused"]
 check(rc == 0 and "catch-up run 1" in out and "| Checkpoint Dedup      | PASS" in out,
       "a run paused on its budget was not caught up before the dedup check (rc=%d): %s" % (rc, verdict(out)))
 
+# The wait must outlast a run that takes its whole budget: with a shorter one every paused run is
+# "not seen", the catch-up gives up and the dedup check is skipped (seen live, 1 Oct 2026).
+rc, out = R["slow_paused"]
+check(rc == 0 and "catch-up run 1" in out and "| Checkpoint Dedup      | PASS" in out,
+      "a run lasting its whole time budget was not waited for, so the dedup check did not run (rc=%d): %s" % (rc, verdict(out)))
+check("The run paused on its time budget" in out,
+      "the pause line of a run lasting its whole budget was not reported")
+
+# The pause line alone, with no cursor in the checkpoint, still means "not caught up".
+for name in ("flag_only", "slow_flag"):
+    rc, out = R[name]
+    check(rc == 0 and "catch-up run 1" in out and "| Checkpoint Dedup      | PASS" in out,
+          "%s: a run that reported a pause was not caught up before the dedup check (rc=%d): %s" % (name, rc, verdict(out)))
+
+# A catch-up run that is not seen neither ends the drain nor counts as caught up.
+rc, out = R["flag_unseen"]
+check(rc == 0 and "not seen; the checkpoint decides" in out and "| Checkpoint Dedup      | SKIPPED" in out,
+      "catch-up runs that were never seen were taken as caught up (rc=%d): %s" % (rc, verdict(out)))
+rc, out = R["flag_unseen_once"]
+check(rc == 0 and "catch-up run 2" in out and "| Checkpoint Dedup      | PASS" in out,
+      "one unseen catch-up run ended the drain instead of the next one finishing it (rc=%d): %s" % (rc, verdict(out)))
+
 rc, out = R["broken"]
 check(rc == 1 and "| Checkpoint Dedup      | FAIL (run 2 changed" in out,
       "a product that re-uploads on every run did not fail the dedup check (rc=%d): %s" % (rc, verdict(out)))
@@ -194,6 +235,16 @@ check(rc == 0 and "| Checkpoint Dedup      | PASS" in out,
 rc, out = R["lag_broken"]
 check(rc == 1 and "| Checkpoint Dedup      | FAIL (run 2 changed" in out,
       "Log Analytics lag hid a re-upload: the first read after a run was taken as settled (rc=%d): %s" % (rc, verdict(out)))
+
+# The wait is built from the budget the function really has.
+script = open(SCRIPT).read()
+budget = re.search(r"^RUN_BUDGET_SECONDS=(\d+)", script, re.M)
+check(budget and "total_budget_seconds = %s * 60" % (int(budget.group(1)) // 60) in open(os.path.join(REPO, "FunctionApp", "function_app.py")).read(),
+      "portal_test.sh RUN_BUDGET_SECONDS no longer matches total_budget_seconds in function_app.py")
+check(re.search(r"^RUN_WAIT_SECONDS=\$\(\(RUN_BUDGET_SECONDS \+ ", script, re.M) is not None,
+      "portal_test.sh RUN_WAIT_SECONDS is not built on top of RUN_BUDGET_SECONDS")
+check(not re.search(r"wait_for_completion\s+\d+", script),
+      "portal_test.sh waits a hard-coded number of seconds for a run")
 
 # The harness parses the Step 3 line the function writes; if that wording moves, the fake above lies.
 source = open(os.path.join(REPO, "FunctionApp", "function_app.py")).read()

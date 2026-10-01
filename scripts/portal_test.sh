@@ -25,6 +25,14 @@ WORKSPACE_RESOURCE_GROUP="${ENV_WORKSPACE_RESOURCE_GROUP:-${WORKSPACE_RESOURCE_G
 ENABLE_AUDIT_LOGGING="${ENV_ENABLE_AUDIT_LOGGING:-${ENABLE_AUDIT_LOGGING:-true}}"
 WORKSPACE_RESOURCE_GROUP="${WORKSPACE_RESOURCE_GROUP:-$RESOURCE_GROUP}"
 AUDIT_WAIT_SECONDS="${AUDIT_WAIT_SECONDS:-900}"
+# How long one import is waited for. A run can legitimately last its whole time budget (the default
+# 48 hour lookback pauses on it), and the wait must outlast that, not undercut it: a paused run
+# that is "not seen" breaks the catch-up and the dedup check never runs.
+RUN_BUDGET_SECONDS=540        # function_app.py total_budget_seconds (9 * 60); change both together
+RUN_OVERSHOOT_SECONDS=30      # the page in flight and the Step 3 line after the budget check (seen: 541 to 547 s)
+AI_LAG_SECONDS=180            # Application Insights shows a run one to three minutes late
+INSTANCE_SWAP_SECONDS=120     # a Consumption worker swap restarts the host; the past-due timer resumed ~2 min later
+RUN_WAIT_SECONDS=$((RUN_BUDGET_SECONDS + RUN_OVERSHOOT_SECONDS + AI_LAG_SECONDS + INSTANCE_SWAP_SECONDS))
 if [ -z "$SUBSCRIPTION_ID" ] || [ -z "$RESOURCE_GROUP" ] || [ -z "$WORKSPACE_NAME" ]; then
     echo "ERROR: set SUBSCRIPTION_ID, RESOURCE_GROUP and WORKSPACE_NAME (scripts/test.config or environment)"
     exit 1
@@ -67,7 +75,10 @@ trigger_function() {
 # succeeded, and its "Step 3: Import complete" line (the run reached its end with no failed
 # indicator and no failed or partial collection). A run that failed, or whose end was never
 # seen, is not a run: the dedup check would compare two reads of a product that did nothing.
-# Ingestion lags one to three minutes; the wait covers that.
+# Ingestion lags one to three minutes; the wait covers that (RUN_WAIT_SECONDS above).
+# LAST_RUN_PAUSED: yes when the run reported "time budget reached" (a paused run, more pages pending),
+# no for a run that ended caught up, unseen when the run was not seen.
+LAST_RUN_PAUSED=""
 AI_APP=$(az resource list --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --resource-type Microsoft.Insights/components --query "[?starts_with(name, 'socradar-taxii-ai-')].name" -o tsv 2>/dev/null | head -1)
 ai_row() {   # first row of an Application Insights query, tab separated; empty when none
     az monitor app-insights query --subscription "$SUBSCRIPTION_ID" -g "$RESOURCE_GROUP" --app "$AI_APP" \
@@ -81,7 +92,7 @@ m = re.search(r"(\d+) failed, \d+ revoked, \d+ pages, (\d+)/(\d+) collections su
 sys.exit(0 if m and m.group(1) == "0" and m.group(2) == m.group(3) != "0" and m.group(4) == "0" else 1)'
 }
 wait_for_completion() {
-    local MAX_WAIT=${1:-420} INTERVAL=20 ELAPSED=0 T0="$2" row ok step3
+    local MAX_WAIT=${1:-$RUN_WAIT_SECONDS} INTERVAL=20 ELAPSED=0 T0="$2" row ok step3 paused
     echo "  Waiting for an invocation after $T0 (max ${MAX_WAIT}s)..."
     while [ $ELAPSED -lt $MAX_WAIT ]; do
         sleep $INTERVAL
@@ -97,6 +108,10 @@ wait_for_completion() {
             if [ -n "$step3" ]; then
                 echo ""; echo "  Invocation: $row (timestamp, success, ms)"
                 echo "  ${step3:0:200}"
+                # The same text the audit row carries in ErrorMessage; the trace is there within minutes,
+                # the audit table of a new workspace takes ten or more.
+                paused=$(ai_row "traces | where timestamp > datetime($T0) and message has 'time budget reached' | take 1 | project message")
+                if [ -n "$paused" ]; then LAST_RUN_PAUSED="yes"; echo "  The run paused on its time budget, more pages are pending"; else LAST_RUN_PAUSED="no"; fi
                 step3_clean "$step3" && return 0
                 echo "  The run reported failed indicators or a failed/partial collection"
                 return 1
@@ -155,11 +170,12 @@ open_cursors() {
 # trigger + wait; non-zero when the run was not seen (an unseen run proves nothing).
 run_import() {
     local t0 code
+    LAST_RUN_PAUSED="unseen"
     t0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     code=$(trigger_function) || code="no-key"
     echo "  Triggered (HTTP $code)"
     case "$code" in 200|202) ;; *) return 1 ;; esac
-    wait_for_completion 420 "$t0"
+    wait_for_completion "$RUN_WAIT_SECONDS" "$t0"
 }
 
 echo "=== SOCRadar TAXII 2.1 Function App - Test ==="
@@ -226,18 +242,26 @@ echo ""
 echo "=== Test 4: Checkpoint Dedup (two more runs must load nothing) ==="
 # A run that paused on its time budget (the default 48 hour lookback can) leaves a cursor and
 # legitimately loads more on the next run. Drain those first; the dedup assert only means
-# something once the collection is caught up.
+# something once the collection is caught up: no cursor left in the checkpoint, and the last run
+# did not report a pause. A catch-up run that was not seen does not end the drain (the checkpoint
+# says whether another is needed) and is never taken as caught up.
+not_caught_up() {
+    printf '%s' "$OPEN" | grep -Eq '^[1-9][0-9]*$' && return 0
+    [ "$LAST_RUN_PAUSED" = "yes" ] && return 0
+    [ $DRAIN -gt 0 ] && [ "$LAST_RUN_PAUSED" = "unseen" ] && return 0
+    return 1
+}
 DRAIN=0; OPEN=$(open_cursors)
-while printf '%s' "$OPEN" | grep -Eq '^[1-9][0-9]*$' && [ $DRAIN -lt "${DRAIN_MAX:-6}" ]; do
+while not_caught_up && [ $DRAIN -lt "${DRAIN_MAX:-6}" ]; do
     DRAIN=$((DRAIN + 1)); echo "  Collection not caught up, catch-up run $DRAIN"
-    run_import || break
+    run_import || echo "  Catch-up run $DRAIN was not seen; the checkpoint decides whether another is needed"
     OPEN=$(open_cursors)
 done
 CHECKPOINT_OK="FAIL (could not run the dedup check)"
 if ! printf '%s' "$OPEN" | grep -Eq '^[0-9]+$'; then
     CHECKPOINT_OK="FAIL (checkpoint table unreadable)"
     echo "  $CHECKPOINT_OK"
-elif [ "$OPEN" != "0" ]; then
+elif not_caught_up; then
     CHECKPOINT_OK="SKIPPED (collection not caught up after $DRAIN catch-up runs)"
     echo "  $CHECKPOINT_OK"
 elif [ "$RUN1_SEEN" != "yes" ] && [ $DRAIN -eq 0 ]; then

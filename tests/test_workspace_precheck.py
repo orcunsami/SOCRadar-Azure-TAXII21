@@ -126,6 +126,17 @@ for resource in resources:
               "azuredeploy.json: %s depends on itself (%s) - ARM rejects the template at "
               "validation and nothing deploys at all" % (rname, dep))
 
+# ARM-TTK "ResourceIds should not contain" rejects reference(concat( anywhere in the template.
+# The onboarding state id is an extension resource of the workspace: extensionResourceId builds
+# the same string, and the guard still reads it with reference() so it still fails on NotFound.
+raw = open(TEMPLATE).read()
+check("reference(concat(" not in raw,
+      "azuredeploy.json: reference(concat( is back; build the id with extensionResourceId (ARM-TTK rejects the concat form)")
+if CROSS_RG and any(r.get("name") == GUARD2 for r in resources):
+    out2 = json.dumps([r for r in resources if r.get("name") == GUARD2][0].get("properties", {}).get("template", {}).get("outputs") or {})
+    check("reference(extensionResourceId(parameters('WorkspaceResourceId'), 'Microsoft.SecurityInsights/onboardingStates', 'default'), '2023-02-01', 'Full').id" in out2,
+          "%s: the onboarding state is not read with reference(extensionResourceId(<workspace>, onboardingStates, 'default'), ..., 'Full').id" % GUARD2)
+
 print("\n".join("  - %s" % f for f in failures))
 if failures:
     print("%d problem(s) in %d checks." % (len(failures), checks))
