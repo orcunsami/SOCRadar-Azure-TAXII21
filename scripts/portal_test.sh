@@ -4,6 +4,8 @@
 # Indicators are counted with a Log Analytics query, not the Sentinel queryIndicators API: that API
 # is capped per page and shows the current state, so a product that re-uploads everything still passes.
 
+# `bash -x` would print the Functions master key; no xtrace in this script.
+{ set +x; } 2>/dev/null
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +27,23 @@ WORKSPACE_RESOURCE_GROUP="${ENV_WORKSPACE_RESOURCE_GROUP:-${WORKSPACE_RESOURCE_G
 ENABLE_AUDIT_LOGGING="${ENV_ENABLE_AUDIT_LOGGING:-${ENABLE_AUDIT_LOGGING:-true}}"
 WORKSPACE_RESOURCE_GROUP="${WORKSPACE_RESOURCE_GROUP:-$RESOURCE_GROUP}"
 AUDIT_WAIT_SECONDS="${AUDIT_WAIT_SECONDS:-900}"
+# Log Analytics can sit on a plateau for minutes and then jump (seen: 16380 -> 17055), and its ingestion lag
+# has no known upper bound. The Test 4 reads therefore also wait until no row was ingested in the last
+# LAW_QUIET_MINUTES; LAW_LAG_SECONDS is the ceiling for that wait, counted from the end of the last import
+# that wrote indicators. When it runs out and rows still arrive, the check is CANNOT-MEASURE.
+LAW_LAG_SECONDS="${LAW_LAG_SECONDS:-900}"
+LAW_QUIET_MINUTES="${LAW_QUIET_MINUTES:-4}"
+LAST_CREATED_END=""   # epoch seconds when this script saw the last run with created + revoked > 0 (revoked rows are written too)
+# The quiet wait also needs a row ingested AFTER LAST_CREATED_END (else "quiet" may only mean "not yet").
+# A run that wrote rows but was never seen (not seen = no Step 3 line) leaves LAST_CREATED_END unset or stale:
+# a known limit, the arrival condition is not asked for then.
+LAST_RUN_CREATED=""; LAST_RUN_REVOKED=""   # counts from the Step 3 line of the last seen run
+# Known limits (no fix):
+# - LAST_CREATED_END is set when this script SEES the Step 3 line, later than the real end: may give an unneeded CANNOT-MEASURE (safe direction).
+# - The ceiling (LAW_LAG_SECONDS) is shared by the baseline, run 2 and run 3 reads.
+# - When the ceiling runs out and the row count is above BASE, the verdict is CANNOT-MEASURE, not FAIL (safe direction).
+# - If the function log lies (a dedup run says 0 created but writes rows to Log Analytics), the arrival condition does not catch it.
+# - While LAST_CREATED_END is empty (an unseen run), the arrival condition is not asked for.
 # How long one import is waited for. A run can legitimately last its whole time budget (the default
 # 48 hour lookback pauses on it), and the wait must outlast that, not undercut it: a paused run
 # that is "not seen" breaks the catch-up and the dedup check never runs.
@@ -45,13 +64,27 @@ if [ -z "$FUNC_APP_NAME" ]; then
 fi
 
 # Stop the Function App on exit (cost control).
+# A stop that failed, or an app not read back as Stopped, makes the exit code non-zero.
 cleanup() {
+    local rc=$? bad=0
+    rm -f "${HDRFILE:-}"
     echo ""
     echo "=== CLEANUP: Stopping Function App ==="
-    az functionapp stop --subscription "$SUBSCRIPTION_ID" --name "$FUNC_APP_NAME" -g "$RESOURCE_GROUP" 2>/dev/null || true
-    FA_STATE=$(az functionapp show --subscription "$SUBSCRIPTION_ID" --name "$FUNC_APP_NAME" -g "$RESOURCE_GROUP" --query "state" -o tsv 2>/dev/null || echo "UNKNOWN")
+    if ! az functionapp stop --subscription "$SUBSCRIPTION_ID" --name "$FUNC_APP_NAME" -g "$RESOURCE_GROUP"; then
+        echo "ERROR: functionapp stop failed: $FUNC_APP_NAME may still be billing"; bad=1
+    fi
+    if ! FA_STATE=$(az functionapp show --subscription "$SUBSCRIPTION_ID" --name "$FUNC_APP_NAME" -g "$RESOURCE_GROUP" --query "state" -o tsv); then
+        FA_STATE=UNKNOWN
+    fi
     echo "  $FUNC_APP_NAME state: $FA_STATE"
+    if [ "$FA_STATE" != "Stopped" ]; then
+        echo "ERROR: $FUNC_APP_NAME is '$FA_STATE', not Stopped: stop it by hand"; bad=1
+    fi
+    [ "$rc" -eq 0 ] && [ "$bad" -ne 0 ] && exit 1
+    return 0
 }
+# The master key goes to curl through this 0600 file, not argv (ps shows argv).
+HDRFILE=$(mktemp)
 trap cleanup EXIT
 
 WS_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$WORKSPACE_RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/$WORKSPACE_NAME"
@@ -65,9 +98,10 @@ trigger_function() {
     local key
     key=$(master_key)
     [ -z "$key" ] && { echo "ERROR: Could not get master key"; return 1; }
-    curl -s -o /dev/null -w "%{http_code}" \
+    printf 'x-functions-key: %s\n' "$key" > "$HDRFILE"
+    curl -s --max-time 60 -o /dev/null -w "%{http_code}" \
         -X POST "https://${FUNC_APP_NAME}.azurewebsites.net/admin/functions/socradar_taxii_import" \
-        -H "x-functions-key: $key" -H "Content-Type: application/json" -d '{}'
+        -H @"$HDRFILE" -H "Content-Type: application/json" -d '{}'
 }
 
 # The admin status endpoint returns {} on this host, so completion is read from
@@ -92,7 +126,7 @@ m = re.search(r"(\d+) failed, \d+ revoked, \d+ pages, (\d+)/(\d+) collections su
 sys.exit(0 if m and m.group(1) == "0" and m.group(2) == m.group(3) != "0" and m.group(4) == "0" else 1)'
 }
 wait_for_completion() {
-    local MAX_WAIT=${1:-$RUN_WAIT_SECONDS} INTERVAL=20 ELAPSED=0 T0="$2" row ok step3 paused
+    local MAX_WAIT=${1:-$RUN_WAIT_SECONDS} INTERVAL=20 ELAPSED=0 T0="$2" row ok step3 paused created revoked
     echo "  Waiting for an invocation after $T0 (max ${MAX_WAIT}s)..."
     while [ $ELAPSED -lt $MAX_WAIT ]; do
         sleep $INTERVAL
@@ -108,6 +142,10 @@ wait_for_completion() {
             if [ -n "$step3" ]; then
                 echo ""; echo "  Invocation: $row (timestamp, success, ms)"
                 echo "  ${step3:0:200}"
+                created=$(printf '%s' "$step3" | sed -n 's/.*Import complete - \([0-9][0-9]*\) created,.*/\1/p')
+                revoked=$(printf '%s' "$step3" | sed -n 's/.*, \([0-9][0-9]*\) revoked,.*/\1/p')
+                LAST_RUN_CREATED=${created:-0}; LAST_RUN_REVOKED=${revoked:-0}
+                if [ $((LAST_RUN_CREATED + LAST_RUN_REVOKED)) -gt 0 ]; then LAST_CREATED_END=$(date +%s); fi
                 # The same text the audit row carries in ErrorMessage; the trace is there within minutes,
                 # the audit table of a new workspace takes ten or more.
                 paused=$(ai_row "traces | where timestamp > datetime($T0) and message has 'time budget reached' | take 1 | project message")
@@ -146,15 +184,39 @@ ti_stats() {
         printf 'UNREADABLE'
     fi
 }
-# Log Analytics ingests with a lag: read until two reads a minute apart agree. A lag longer than
-# that minute can still settle early and read a late row as a change; that fails the check
+# Rows with ingestion_time() > $1 (a KQL datetime), or UNREADABLE. A missing table is zero.
+ti_count() {
+    local out err rc=0
+    err=$(mktemp)
+    out=$(az monitor log-analytics query -w "$CUSTOMER_ID" --analytics-query \
+        "ThreatIntelIndicators | where SourceSystem == 'SOCRadar TAXII' | summarize R=countif(ingestion_time() > $1)" \
+        --query "[0].R" -o tsv 2>"$err") || rc=$?
+    if [ $rc -ne 0 ] && grep -qi "failed to resolve table" "$err"; then
+        out="0"; rc=0
+    fi
+    rm -f "$err"
+    if [ $rc -eq 0 ] && printf '%s' "$out" | grep -Eq '^[0-9]+$'; then printf '%s' "$out"; else printf 'UNREADABLE'; fi
+}
+ti_recent() { ti_count "ago(${LAW_QUIET_MINUTES}m)"; }   # ingested in the last LAW_QUIET_MINUTES
+ti_arrived() { ti_count "unixtime_seconds_todatetime($LAST_CREATED_END)"; }   # ingested after the last import ended
+# Log Analytics ingests with a lag: read until $1 (default 2) reads a minute apart agree. A lag longer
+# than that can still settle early and read a late row as a change; that fails the check
 # (the safe direction), as does a live feed that gains an indicator between two runs.
+# The Test 4 reads ask for 3 and "quiet" ($2): after an import that wrote indicators, also no row ingested
+# in the last LAW_QUIET_MINUTES AND at least one row ingested after LAST_CREATED_END (quiet alone can mean "not yet").
+# Gives up (UNSETTLED) when the ceiling has passed and either condition still fails.
 ti_settled() {
-    local prev="" cur n=0
+    local prev="" cur eq=0 n=0 rec ceiling=""
+    [ "$2" = quiet ] && [ -n "$LAST_CREATED_END" ] && ceiling=$((LAST_CREATED_END + LAW_LAG_SECONDS))
     while [ $n -lt "${LAW_SETTLE_READS:-20}" ]; do
         cur=$(ti_stats)
-        if [ "$cur" != "UNREADABLE" ] && [ "$cur" = "$prev" ]; then
-            printf '%s' "$cur"; return 0
+        if [ "$cur" != "UNREADABLE" ] && [ "$cur" = "$prev" ]; then eq=$((eq + 1)); else eq=1; fi
+        if [ "$cur" != "UNREADABLE" ] && [ $eq -ge "${1:-2}" ]; then
+            if [ -z "$ceiling" ]; then printf '%s' "$cur"; return 0; fi
+            rec=$(ti_recent); arr=$(ti_arrived)
+            if [ "$rec" = 0 ] && [ "$arr" != 0 ] && [ "$arr" != UNREADABLE ]; then printf '%s' "$cur"; return 0; fi
+            echo "  Log Analytics not settled (ingested in the last ${LAW_QUIET_MINUTES} min: $rec, after the last import ended: $arr), waiting" >&2
+            [ "$(date +%s)" -ge "$ceiling" ] && break
         fi
         prev="$cur"; sleep 60; n=$((n + 1))
     done
@@ -210,7 +272,11 @@ if [ -n "$FA_PRINCIPAL" ]; then
 fi
 echo "  Reading the indicators already in Log Analytics (settles over two reads a minute apart)..."
 LAW_BEFORE=$(ti_settled)
-case "$LAW_BEFORE" in UNREADABLE*|*UNSETTLED) echo "ERROR: no stable baseline from Log Analytics ($LAW_BEFORE)"; exit 1 ;; esac
+case "$LAW_BEFORE" in
+    UNREADABLE*) echo "FAIL: no baseline from Log Analytics ($LAW_BEFORE)"; exit 1 ;;
+    *UNSETTLED) echo "CANNOT-MEASURE: no stable baseline from Log Analytics ($LAW_BEFORE)"; exit 3 ;;
+esac
+LAW_LAST="$LAW_BEFORE"   # last settled read, for the summary
 echo "  Log Analytics before (rows ids): $LAW_BEFORE"
 echo ""
 
@@ -224,6 +290,7 @@ case "$LAW_AFTER" in UNREADABLE*|*UNSETTLED) NEW_INDICATORS="unreadable" ;; *) N
 echo "  Log Analytics before (rows ids): $LAW_BEFORE"
 echo "  Log Analytics after  (rows ids): $LAW_AFTER"
 echo "  New distinct indicators:         $NEW_INDICATORS"
+case "$LAW_AFTER" in UNREADABLE*|*UNSETTLED) ;; *) LAW_LAST="$LAW_AFTER" ;; esac
 echo ""
 
 echo "=== Test 3: Checking Storage Checkpoint ==="
@@ -267,17 +334,24 @@ elif not_caught_up; then
 elif [ "$RUN1_SEEN" != "yes" ] && [ $DRAIN -eq 0 ]; then
     echo "  The first run was not seen, nothing to compare against"
 else
-    BASE=$(ti_settled)
+    BASE=$(ti_settled 3 quiet)
     echo "  Log Analytics baseline (rows ids): $BASE"
     case "$BASE" in
-        UNREADABLE*|*UNSETTLED) CHECKPOINT_OK="FAIL (Log Analytics unreadable)" ;;
+        UNREADABLE*) CHECKPOINT_OK="FAIL (Log Analytics unreadable)" ;;
+        *UNSETTLED) CHECKPOINT_OK="CANNOT-MEASURE (Log Analytics did not settle: $BASE)" ;;
         0\ *) CHECKPOINT_OK="FAIL (no indicator rows in Log Analytics, nothing to dedup against)" ;;
         *)
+            LAW_LAST="$BASE"
             CHECKPOINT_OK="PASS"
             for n in 2 3; do
                 if ! run_import; then CHECKPOINT_OK="FAIL (run $n was not seen)"; break; fi
-                NOW=$(ti_settled)
+                # The function's own count, no waiting for Log Analytics: a dedup run must load nothing.
+                LOADED=$((LAST_RUN_CREATED + LAST_RUN_REVOKED))
+                if [ $LOADED -gt 0 ]; then CHECKPOINT_OK="FAIL (run $n loaded $LOADED new indicators ($LAST_RUN_CREATED created, $LAST_RUN_REVOKED revoked), expected 0; Log Analytics now: $(ti_stats), baseline: $BASE)"; break; fi
+                NOW=$(ti_settled 3 quiet)
                 echo "  After run $n (rows ids): $NOW"
+                case "$NOW" in UNREADABLE*) CHECKPOINT_OK="FAIL (Log Analytics unreadable after run $n)"; break ;; *UNSETTLED) CHECKPOINT_OK="CANNOT-MEASURE (Log Analytics did not settle after run $n: $NOW)"; break ;; esac
+                LAW_LAST="$NOW"
                 if [ "$NOW" != "$BASE" ]; then CHECKPOINT_OK="FAIL (run $n changed $BASE to $NOW)"; break; fi
             done ;;
     esac
@@ -311,13 +385,22 @@ echo "==========================================="
 echo "            TEST SUMMARY"
 echo "==========================================="
 echo ""
+SUMMARY=$(
 echo "| Test                  | Result          |"
 echo "|-----------------------|-----------------|"
 [ "$RUN1_SEEN" = "yes" ] && [ "$NEW_INDICATORS" -gt 0 ] 2>/dev/null && echo "| Import Run            | PASS ($NEW_INDICATORS new) |" || echo "| Import Run            | WARN (run not seen or 0 new) |"
 [ "$CHECKPOINTS" -gt 0 ] 2>/dev/null && echo "| Storage Checkpoint    | PASS            |" || echo "| Storage Checkpoint    | FAIL            |"
 echo "| Checkpoint Dedup      | $CHECKPOINT_OK |"
 echo "| Audit Table           | $AUDIT_OK |"
+)
+echo "$SUMMARY"
 echo ""
-echo "Log Analytics (rows ids): $LAW_BEFORE -> $LAW_AFTER"
-case "$CHECKPOINT_OK" in FAIL*) exit 1 ;; esac
+echo "Log Analytics (rows ids): $LAW_BEFORE -> $LAW_LAST (last settled read)"
+# exit 1: any FAIL row; exit 3: nothing failed but the dedup check did not run or could not be measured
+# (not green). WARN rows (Import Run: run not seen or 0 new) are informational: the dedup row already
+# carries the verdict for an unseen run.
+printf '%s\n' "$SUMMARY" | grep -q '| FAIL' && exit 1
+case "$CHECKPOINT_OK" in
+    SKIPPED*|CANNOT-MEASURE*) exit 3 ;;
+esac
 echo "Function App will be STOPPED by cleanup trap."
