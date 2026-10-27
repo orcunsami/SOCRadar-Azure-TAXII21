@@ -24,6 +24,8 @@ az deployment group create \
 
 If the workspace lives in another resource group, add `WorkspaceResourceGroup=<WORKSPACE_RG>`.
 
+Step by step: [docs/setup-guide.md](docs/setup-guide.md).
+
 `DeployNewWorkspace` defaults to `false`: the deployment uses your existing workspace and does not update the workspace itself, so its pricing tier (commitment tier included), retention and daily cap stay as they are. It does add the audit table under the workspace and enables Microsoft Sentinel on it if that is not done yet. If you do not have a workspace yet, add `DeployNewWorkspace=true` and the deployment creates one. Deploy in incremental mode (the default); complete mode deletes resources in the group that the template does not list.
 
 ## Parameters
@@ -35,7 +37,7 @@ If the workspace lives in another resource group, add `WorkspaceResourceGroup=<W
 | `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
-| `TAXIIUsername` | Yes | - | TAXII username issued by SOCRadar, e.g. `radar_330`, not the bare company ID |
+| `TAXIIUsername` | Yes | - | TAXII username issued by SOCRadar, e.g. `radar_<company id>`, not the bare company ID |
 | `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
 | `PollingIntervalMinutes` | No | 60 | Polling interval, 5-1440 min. Use a divisor of 60 for minutes or a divisor of 24 for whole hours; other values fire unevenly (45 runs at :00 and :45, 90 runs hourly). |
 | `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |

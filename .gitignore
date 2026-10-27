@@ -22,7 +22,8 @@ scripts/*
 !scripts/portal_test.sh
 !scripts/portal_reset.sh
 !scripts/test.config.example
-docs/
+docs/*
+!docs/setup-guide.md
 Seperate-Repo/
 Solution/
 dist/
