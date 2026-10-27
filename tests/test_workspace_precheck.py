@@ -49,13 +49,14 @@ check(bool(resources), "azuredeploy.json: no resources - this check has gone bli
 check(any(r.get("type") == WS_TYPE for r in resources),
       "azuredeploy.json: no workspace resource - this check has gone blind")
 
-# The default is true: a one-click deploy with a fresh name creates the workspace instead of
-# failing on it (the empty properties block means an existing one is never rewritten). The
-# toggle sits right under WorkspaceName so the portal form shows it there.
+# The default is false: the template sends nothing to a workspace that already exists, so a
+# commitment tier can never be touched; a missing name fails before anything is created.
+# Creating a workspace is opt-in (true). The toggle sits right under WorkspaceName so the
+# portal form shows it there.
 params = root.get("parameters", {})
 toggle = params.get("DeployNewWorkspace", {})
-check(toggle.get("defaultValue") is True,
-      "azuredeploy.json: DeployNewWorkspace must default to true")
+check(toggle.get("defaultValue") is False,
+      "azuredeploy.json: DeployNewWorkspace must default to false")
 check(list(params)[:2] == ["WorkspaceName", "DeployNewWorkspace"],
       "azuredeploy.json: DeployNewWorkspace must be declared directly after WorkspaceName, found %s" % list(params)[:2])
 

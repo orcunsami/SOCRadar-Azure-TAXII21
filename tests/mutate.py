@@ -339,6 +339,13 @@ MUTATIONS = [
  ("harness curl without --max-time","scripts/portal_test.sh",
   '''curl -s --max-time 60 -o /dev/null''','''curl -s -o /dev/null''',
   "tests/test_portal_dedup.py"),
+ ("workspace toggle defaults to true again","azuredeploy.json",
+  '''"DeployNewWorkspace": {
+            "type": "bool",
+            "defaultValue": false,''','''"DeployNewWorkspace": {
+            "type": "bool",
+            "defaultValue": true,''',
+  "tests/test_workspace_precheck.py"),
 ]
 # pre-gate: replace(old,new,1) breaks the first hit, so an anchor that is not unique mutates the wrong place
 bad=[(n,p,open(os.path.join(REPO,p),encoding='utf-8').read().count(o)) for n,p,o,_,_ in MUTATIONS]

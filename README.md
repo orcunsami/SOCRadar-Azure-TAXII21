@@ -24,12 +24,14 @@ az deployment group create \
 
 If the workspace lives in another resource group, add `WorkspaceResourceGroup=<WORKSPACE_RG>`.
 
+`DeployNewWorkspace` defaults to `false`: the deployment uses your existing workspace and does not update the workspace itself, so its pricing tier (commitment tier included), retention and daily cap stay as they are. It does add the audit table under the workspace and enables Microsoft Sentinel on it if that is not done yet. If you do not have a workspace yet, add `DeployNewWorkspace=true` and the deployment creates one. Deploy in incremental mode (the default); complete mode deletes resources in the group that the template does not list.
+
 ## Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
-| `DeployNewWorkspace` | No | `true` | Create `WorkspaceName` when it does not exist yet; an existing workspace under that name is left untouched (pricing tier, retention, daily cap). Set `false` when the workspace must already exist, so a misspelled name fails before anything is created. An existing workspace in another region than `WorkspaceLocation` fails with `InvalidResourceLocation`. |
+| `DeployNewWorkspace` | No | `false` | `false` uses the workspace that already exists: the workspace itself is not updated, so its pricing tier, retention and daily cap are never changed, and a name that does not exist fails before anything is created. Set `true` only to create a new workspace named `WorkspaceName`; do not set it on an existing workspace that uses a commitment tier. |
 | `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
@@ -67,8 +69,8 @@ az monitor log-analytics workspace show -g <resource-group> -n <workspace> \
 
 If `lastSkuUpdate` lines up with when you deployed this integration and the tier isn't the one
 you picked, reset your commitment tier from **Log Analytics workspaces > Usage and estimated
-costs > Pricing tier**. The current template states no workspace-level settings at all, so
-redeploying -- with `DeployNewWorkspace` at its default `true` -- cannot change its pricing
+costs > Pricing tier**. The current template does not update an existing workspace while
+`DeployNewWorkspace` is at its default `false`, so redeploying cannot change its pricing
 tier, retention or daily cap.
 
 Redeploying over an installation made before September 2026 also adds a **Microsoft Sentinel Contributor** assignment scoped to the workspace; the earlier resource-group-scoped one stays and does no harm. Before that date revoked indicators were dropped instead of uploaded, so `IndicatorsRevoked` in older audit rows means "seen", not "uploaded".

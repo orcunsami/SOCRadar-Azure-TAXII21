@@ -11,10 +11,10 @@
 # The path a customer actually clicks -- the defaults -- was never run.
 #
 # Five paths, each asserting a different thing:
-#   A  missing workspace, DeployNewWorkspace=false -> fails, resource group stays EMPTY
-#   B  same RG, defaults (one click)      -> succeeds, guard SKIPPED
+#   A  missing workspace, defaults (DeployNewWorkspace=false) -> fails, resource group stays EMPTY
+#   B  same RG, DeployNewWorkspace=true (opt-in create) -> succeeds, guard SKIPPED
 #   C  existing onboarded workspace, cross-RG -> both guards SUCCEED and resolve
-#   D  redeploy against the workspace B made   -> the guard does not block it
+#   D  redeploy at the defaults against the workspace B made -> the guard does not block it, nothing is sent to it
 #   E  cross-RG onto a workspace with no Microsoft Sentinel -> rejected, nothing created
 #
 # C matters most: the guard is skipped on the greenfield path, so a wrong
@@ -166,7 +166,7 @@ echo "      path C workspace: $EXT_RG / $EXT_WS"
 
 # --- A: the customer's typo, defaults left alone --------------------------------------
 echo "[2/6] Path A: missing workspace with DeployNewWorkspace=false ..."
-deploy "$RG_APP" path-a WorkspaceName="$MISSING" DeployNewWorkspace=false
+deploy "$RG_APP" path-a WorkspaceName="$MISSING"
 state=$(az deployment group show -g "$RG_APP" -n path-a --query properties.provisioningState -o tsv 2>/dev/null)
 left=$(az resource list -g "$RG_APP" --query "length(@)" -o tsv 2>/dev/null)
 blamed=$(failed_step "$RG_APP" path-a | grep -c 'precheck-workspace-exists')
@@ -184,7 +184,7 @@ blamed=$(failed_step "$RG_APP" path-a | grep -c 'precheck-workspace-exists')
 
 # --- B: greenfield, the mode every earlier E2E used ------------------------------------
 echo "[3/6] Path B: new workspace name, parameters at their defaults ..."
-deploy "$RG_APP" path-b WorkspaceName="$WS"
+deploy "$RG_APP" path-b WorkspaceName="$WS" DeployNewWorkspace=true
 state=$(az deployment group show -g "$RG_APP" -n path-b --query properties.provisioningState -o tsv 2>/dev/null)
 steps=$(failed_step "$RG_APP" path-b)
 [ "$state" = Succeeded ] \
@@ -237,7 +237,15 @@ printf '%s' "${onb:-}" | grep -q 'onboardingStates/default' \
 
 # --- D: the guard must not block a second, correct deployment --------------------------
 echo "[5/6] Path D: redeploying against the workspace B created ..."
-deploy "$RG_APP" path-d WorkspaceName="$WS" DeployNewWorkspace=false
+# Give the workspace a non-default retention first: the redeploy must leave it, and its
+# lastSkuUpdate, exactly as they were (the customer's case: an existing workspace, defaults).
+az monitor log-analytics workspace update -g "$RG_APP" -n "$WS" --retention-time 90 -o none 2>/dev/null
+before=$(az monitor log-analytics workspace show -g "$RG_APP" -n "$WS" --query "[retentionInDays, sku.name, sku.lastSkuUpdate]" -o tsv 2>/dev/null | tr '\n' ' ')
+deploy "$RG_APP" path-d WorkspaceName="$WS"
+after=$(az monitor log-analytics workspace show -g "$RG_APP" -n "$WS" --query "[retentionInDays, sku.name, sku.lastSkuUpdate]" -o tsv 2>/dev/null | tr '\n' ' ')
+[ -n "$before" ] && [ "$before" = "$after" ] \
+    && row "D leaves the existing workspace untouched" PASS "retention/sku/lastSkuUpdate unchanged" \
+    || row "D leaves the existing workspace untouched" FAIL "before='$before' after='$after'"
 state=$(az deployment group show -g "$RG_APP" -n path-d --query properties.provisioningState -o tsv 2>/dev/null)
 steps=$(failed_step "$RG_APP" path-d)
 [ "$state" = Succeeded ] \
