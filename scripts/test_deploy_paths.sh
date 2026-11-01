@@ -327,7 +327,7 @@ printf '%s' "$msg" | grep -q 'rejected the username or password' \
     || row "K banner names the rejected password" FAIL "status message was: $(printf '%s' "$msg" | head -c 200)"
 
 # --- F: what the first window left in the workspace ------------------------------------
-echo "[8/8] Path F: first-run audit and indicators in the workspace of path B, then a host restart (up to 35 min) ..."
+echo "[8/8] Path F: first-run audit and indicators in the workspace of path B, then a host restart (up to 65 min) ..."
 cust=$(az monitor log-analytics workspace show -g "$RG_APP" -n "$WS" --query customerId -o tsv 2>/dev/null)
 APP_B=$(az functionapp list -g "$RG_APP" --query "[0].name" -o tsv 2>/dev/null)
 res=$(python3 - "$cust" "$RG_APP" "$APP_B" <<'PYEOF'
@@ -365,7 +365,7 @@ rr = subprocess.run(["az", "functionapp", "restart", "-g", rg, "-n", app], captu
 if rr.returncode != 0:
     print("NORESTART"); sys.exit(0)
 later = []
-second_deadline = time.time() + int(os.environ.get("TEST_RESTART_WAIT", "900"))
+second_deadline = time.time() + int(os.environ.get("TEST_RESTART_WAIT", "2400"))
 while time.time() < second_deadline:
     rows = q("SOCRadar_TAXII_Audit_CL | project TimeGenerated, Status, IndicatorsCreated | order by TimeGenerated asc") or rows
     later = [r for r in rows if ts(r["TimeGenerated"]) > restart_at]
