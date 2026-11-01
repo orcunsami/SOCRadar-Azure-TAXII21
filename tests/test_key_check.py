@@ -40,6 +40,10 @@ check("TAXIIPassword" in env_vars.get("TAXII_PASSWORD", {}).get("secureValue", "
 check("TAXIIUsername" in env_vars.get("TAXII_USERNAME", {}).get("value", ""), "the username env var is not wired to TAXIIUsername")
 check("ApiRoots" in env_vars.get("API_ROOT", {}).get("value", ""), "API_ROOT is not taken from ApiRoots")
 check("CollectionIds" in env_vars.get("COLLECTION_ID", {}).get("value", ""), "COLLECTION_ID is not taken from CollectionIds")
+# the check asks the FIRST collection of a comma list: both env values take element 0 of the split
+check("split(parameters('CollectionIds'), ',')[0]" in env_vars.get("COLLECTION_ID", {}).get("value", "")
+      and "split(parameters('ApiRoots'), ',')[0]" in env_vars.get("API_ROOT", {}).get("value", ""),
+      "API_ROOT and COLLECTION_ID must both take element 0 of their comma list")
 check("set -x" not in script, "xtrace would print the password")
 check("# key check" in script and script.index("# key check") < script.index("PACKAGE_URL"),
       "the credential check must run before the package is downloaded")
@@ -73,12 +77,19 @@ r, argv, stdin = run("200")
 check(r.returncode == 0 and "REACHED_NEXT_STEP" in r.stdout, "good credentials must continue: %r" % r.stdout)
 check(argv is not None and PASSWORD not in argv, "the password is on curl's command line")
 check(stdin is not None and PASSWORD in stdin and USER in stdin, "the credentials did not reach curl on stdin")
+check(argv and "-m 60" in argv, "the check needs a timeout: %r" % argv)
+check(argv and "-A Mozilla/5.0" in argv, "without a browser user agent Cloudflare answers 403 and the check proves nothing: %r" % argv)
+check(argv and "Accept: application/taxii+json;version=2.1" in argv, "the TAXII Accept header is missing: %r" % argv)
 check(argv and "taxii2.socradar.com/radar_alpha/collections/fd3fec42-efee-4353-85b2-cb87f9acc4ef/" in argv,
       "wrong URL: %r" % argv)
 
 # a quote or backslash in the password must not break the curl config line
 r, _, stdin = run("200", password='pa"ss\\word')
 check(stdin is not None and 'pa\\"ss\\\\word' in stdin, "quote and backslash must be escaped in the curl config: %r" % stdin)
+
+# the same for a quote or backslash in the user name
+r, _, stdin = run("200", user='us"er\\x')
+check(stdin is not None and 'us\\"er\\\\x' in stdin, "quote and backslash in the user name must be escaped in the curl config: %r" % stdin)
 
 r, _, _ = run("401")
 check(r.returncode != 0 and "REACHED_NEXT_STEP" not in r.stdout, "a 401 must stop the deployment")

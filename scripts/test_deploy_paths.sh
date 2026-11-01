@@ -73,11 +73,11 @@ row() {  # row <name> <PASS|FAIL> <detail>
 }
 
 cleanup() {
+    rm -f "$CRED_FILE" "$DEAD_FILE"   # the credential files go whatever KEEP_RESOURCES says
     if [ "$KEEP" = true ]; then
         echo "KEEP_RESOURCES=true, leaving the resource groups in place"
         return
     fi
-    rm -f "$CRED_FILE" "$DEAD_FILE"
     for rg in "$RG_APP" "$RG_C" "$RG_BARE" "$RG_E" "$RG_K"; do
         az group delete -n "$rg" --yes --no-wait -o none 2>/dev/null
     done
@@ -394,9 +394,9 @@ else
         && row "F indicators landed" PASS "$ti_n row(s) in ThreatIntelIndicators" \
         || row "F indicators landed" FAIL "no TAXII indicator in ThreatIntelIndicators"
     if [ "$later_rows" -ge 1 ]; then
-        [ "$later_made" -lt "$first" ] \
+        [ $((later_made * 10)) -lt "$first" ] \
             && row "F a host restart does not resend the import" PASS "first created $first, after the restart $later_made" \
-            || row "F a host restart does not resend the import" FAIL "first created $first, after the restart $later_made"
+            || row "F a host restart does not resend the import" FAIL "first created $first, after the restart $later_made (more than a tenth of the first import is a resend)"
     else
         row "F a host restart does not resend the import" FAIL "the restarted host wrote no audit row in the window, so the startup import was not observed"
     fi

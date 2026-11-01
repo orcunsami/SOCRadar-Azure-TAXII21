@@ -38,10 +38,17 @@ def run(env_extra):
         os.chmod(az, os.stat(az).st_mode | stat.S_IXUSR)
         env = {k: v for k, v in os.environ.items() if k not in VARS}
         env.update(PATH=tmp + os.pathsep + os.environ["PATH"], **env_extra)
+        proc = subprocess.Popen(["bash", SCRIPT], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=True)
         try:
-            r = subprocess.run(["bash", SCRIPT], env=env, capture_output=True, text=True, timeout=20)
+            out, err = proc.communicate(timeout=20)
+            r = subprocess.CompletedProcess(SCRIPT, proc.returncode, out, err)
         except subprocess.TimeoutExpired:
-            # a script that got past the guard keeps going (resource groups, waits); that is the failure
+            # a script that got past the guard keeps going (resource groups, waits); that is the failure.
+            # Kill the whole group: an orphan would outlive the fake az and find the real one on PATH.
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
             r = subprocess.CompletedProcess(SCRIPT, 0, "", "still running after 20s: the guard did not stop it")
         calls = open(os.path.join(tmp, "calls")).read() if os.path.exists(os.path.join(tmp, "calls")) else ""
         return r, calls
@@ -62,6 +69,10 @@ check('--parameters @"${PARAM_FILE:-$CRED_FILE}"' in text, "credentials must com
 check("umask 077" in text and text.index("umask 077") < text.index("CRED_FILE=$(mktemp)"), "the parameter file must be created 0600")
 check('PARAM_FILE="$DEAD_FILE" deploy "$RG_K" path-k' in text, "path K must deploy with the rejected password")
 check('rm -f "$CRED_FILE" "$DEAD_FILE"' in text, "the credential files are left behind")
+_cleanup = text[text.index("cleanup() {"):]
+check(_cleanup.index('rm -f "$CRED_FILE" "$DEAD_FILE"') < _cleanup.index('if [ "$KEEP" = true ]'),
+      "the credential files must be removed before the KEEP_RESOURCES early return")
+check("$((later_made * 10)) -lt" in text, "a restart that sends more than a tenth of the first import again must fail")
 check("rejected the username or password" in text and "triggerFirstRun" in text, "path K must check the banner text and the failing step")
 
 if failures:
