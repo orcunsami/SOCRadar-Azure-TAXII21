@@ -38,7 +38,7 @@ Step by step: [docs/setup-guide.md](docs/setup-guide.md).
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
 | `TAXIIUsername` | Yes | - | TAXII username issued by SOCRadar, e.g. `radar_<company id>`, not the bare company ID |
-| `TAXIIPassword` | Yes | - | SOCRadar Platform API Key |
+| `TAXIIPassword` | Yes | - | SOCRadar Platform API Key. The deployment checks the username and password against the TAXII server and fails with a clear message if they are rejected (HTTP 401), instead of finishing with an app that imports nothing. |
 | `PollingIntervalMinutes` | No | 60 | Polling interval, 5-1440 min. Use a divisor of 60 for minutes or a divisor of 24 for whole hours; other values fire unevenly (45 runs at :00 and :45, 90 runs hourly). |
 | `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
