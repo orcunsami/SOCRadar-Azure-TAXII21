@@ -63,7 +63,7 @@ ThreatIntelIndicators
 | take 10
 ```
 
-The first rows can take a few minutes after the first run. They also show under Microsoft Sentinel > Threat management > Threat intelligence (Azure portal) or Threat intelligence > Intel management (Defender portal).
+The first rows can take a few minutes after the first run. They also show under Microsoft Sentinel > Threat management > Threat intelligence (Azure portal) or Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace). In the Defender portal, Advanced hunting on `ThreatIntelIndicators` also reads secondary workspaces.
 
 ## 4. Workspace in another resource group
 

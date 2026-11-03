@@ -213,8 +213,8 @@ Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-co
 **Threat Intelligence indicators** are uploaded to the `ThreatIntelIndicators` table in Log Analytics. You can view them in:
 
 - Azure portal: **Microsoft Sentinel > Threat management > Threat intelligence**
-- Defender portal: **Threat intelligence > Intel management**
-- **Log Analytics > Logs** (Azure portal) or **Investigation & response > Hunting > Advanced hunting** (Defender portal) with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+- **Log Analytics > Logs** (Azure portal) or **Investigation & response > Hunting > Advanced hunting** (Defender portal, also reads secondary workspaces) with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+- Defender portal TI page: **Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace)**
 
 Microsoft Sentinel in the Azure portal is supported until 31 March 2027; after that it is available only in the Microsoft Defender portal.
 
