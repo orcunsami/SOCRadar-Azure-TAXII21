@@ -212,8 +212,11 @@ Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-co
 
 **Threat Intelligence indicators** are uploaded to the `ThreatIntelIndicators` table in Log Analytics. You can view them in:
 
-- **Microsoft Sentinel > Threat Intelligence** blade
-- **Log Analytics > Logs** with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+- Azure portal: **Microsoft Sentinel > Threat management > Threat intelligence**
+- Defender portal: **Threat intelligence > Intel management**
+- **Log Analytics > Logs** (Azure portal) or **Investigation & response > Hunting > Advanced hunting** (Defender portal) with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
+
+Microsoft Sentinel in the Azure portal is supported until 31 March 2027; after that it is available only in the Microsoft Defender portal.
 
 **The same indicator more than once.** The checkpoint stops runs from re-fetching, but inside one fetch the TAXII server can send the same indicator on several pages (measured 1 Oct 2026 on one collection: 3552 indicator objects for 1268 distinct STIX ids, 2.8 times each). The import does not collapse them: every copy is uploaded. So `IndicatorsCreated` counts uploads Microsoft Sentinel accepted, not distinct indicators, and `ThreatIntelIndicators` in Log Analytics is an append log with one row per upload. `count()` over it overstates, and the workbook tiles that use `count()` (Indicators by Type, by Source, over time) count rows. For the number of different indicators count the ids:
 
@@ -263,7 +266,7 @@ the upload API; a persistent 4xx needs the cause fixed. The
 `SOCRadar TAXII indicators did not reach Microsoft Sentinel` analytic rule
 (Content Hub) reports this.
 
-Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Microsoft Sentinel > Workbooks).
+Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Azure portal: Microsoft Sentinel > Workbooks; Defender portal: Microsoft Sentinel > Threat management > Workbooks).
 
 ## About SOCRadar
 
