@@ -14,11 +14,13 @@ part of the product; it creates a DCE and a DCR in the resource group you name.
 indicators.json: {"ip": ..., "ip_inbound": ..., "ip_denied": ..., "domain": ..., "url": ...,
                   "sha256": ..., "sha1": ..., "md5": ...} with live values from the workspace.
 
+ASIM_TABLES=ASimDnsActivityLogs,... limits `send` to those tables.
 Needs the Azure CLI, signed in, with permission to create a DCR and a role assignment.
 """
 
 import datetime
 import json
+import os
 import subprocess
 import sys
 import time
@@ -133,7 +135,10 @@ def send(rg, ind):
     endpoint = dce["properties"]["logsIngestion"]["endpoint"]
     immutable = dcr["properties"]["immutableId"]
     token = az("account", "get-access-token", "--resource", "https://monitor.azure.com", "--query", "accessToken", "-o", "tsv")
+    only = [t for t in os.environ.get("ASIM_TABLES", "").split(",") if t]   # resend just these tables
     for table, rows in events(ind).items():
+        if only and table not in only:
+            continue
         url = "%s/dataCollectionRules/%s/streams/Custom-%s?api-version=2023-01-01" % (endpoint, immutable, table)
         for attempt in range(1, 9):
             request = urllib.request.Request(url, data=json.dumps(rows).encode(), method="POST",

@@ -413,7 +413,7 @@ MUTATIONS = [
   '''let dt_lookBack = 2h;''','''let dt_lookBack = 10m;''',
   "tests/test_threat_hunt_rules.py"),
  ("rule: process rule entity column not projected","Analytic Rules/SOCRadarTAXIIThreatHuntProcessHash.yaml",
-  '''columnName: ProcessCommandLine''','''columnName: ProcessCommandLines''',
+  '''columnName: ProcessName''','''columnName: ProcessNames''',
   "tests/test_threat_hunt_rules.py"),
  ("template: IP query drifts from the YAML","azuredeploy.json",
   '''$left.DstIpAddr == $right.MatchKey''','''$left.DstIpAddr == $right.MatchedValue''',

@@ -24,6 +24,7 @@ customDetails:
   SOCRadarIndicatorId: IndicatorId
   SOCRadarThreatLabels: ThreatLabels
   SourceProduct: SourceProduct
+  ProcessCommandLine: ProcessCommandLine
 incidentConfiguration:
   createIncident: true
   groupingConfiguration:
@@ -74,10 +75,10 @@ entityMappings:
         columnName: HashAlgorithm
       - identifier: Value
         columnName: MatchedValue
-  - entityType: Process
+  - entityType: File
     fieldMappings:
-      - identifier: CommandLine
-        columnName: ProcessCommandLine
+      - identifier: Name
+        columnName: ProcessName
   - entityType: Account
     fieldMappings:
       - identifier: Name

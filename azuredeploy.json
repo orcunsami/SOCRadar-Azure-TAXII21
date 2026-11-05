@@ -502,7 +502,8 @@
                     "SOCRadarValidUntil": "ValidUntil",
                     "SOCRadarIndicatorId": "IndicatorId",
                     "SOCRadarThreatLabels": "ThreatLabels",
-                    "SourceProduct": "SourceProduct"
+                    "SourceProduct": "SourceProduct",
+                    "ProcessCommandLine": "ProcessCommandLine"
                 },
                 "entityMappings": [
                     {
@@ -519,11 +520,11 @@
                         ]
                     },
                     {
-                        "entityType": "Process",
+                        "entityType": "File",
                         "fieldMappings": [
                             {
-                                "identifier": "CommandLine",
-                                "columnName": "ProcessCommandLine"
+                                "identifier": "Name",
+                                "columnName": "ProcessName"
                             }
                         ]
                     },
