@@ -30,7 +30,12 @@ incidentConfiguration:
     enabled: true
     reopenClosedIncident: false
     lookbackDuration: 1h
-    matchingMethod: AllEntities
+    matchingMethod: Selected
+    groupByEntities:
+      - IP
+      - Host
+    groupByAlertDetails:
+      - DisplayName
 eventGroupingSettings:
   aggregationKind: AlertPerResult
 alertDetailsOverride:

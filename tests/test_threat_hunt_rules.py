@@ -219,8 +219,18 @@ for key, rule in rules.items():
     # incident shape
     check(rule["eventGroupingSettings"]["aggregationKind"] == "AlertPerResult", where + "not AlertPerResult")
     group = rule["incidentConfiguration"]["groupingConfiguration"]
-    check(group["enabled"] is True and group["matchingMethod"] == "AllEntities" and group["reopenClosedIncident"] is False,
-          where + "incident grouping drifted from AllEntities / no reopen")
+    check(group["enabled"] is True and group["reopenClosedIncident"] is False and group["lookbackDuration"] == "1h",
+          where + "incident grouping is not enabled / no reopen / 1h")
+    # Measured on a live workspace (5 Nov 2026): alerts that carry a DNS or a Process entity never match an
+    # earlier incident under AllEntities, every run opens a new incident. Those rules group on other fields.
+    types = [e["entityType"] for e in rule["entityMappings"]]
+    if "DNS" in types or "Process" in types:
+        check(group["matchingMethod"] == "Selected", where + "a DNS or Process entity under AllEntities never groups")
+        check("DNS" not in group.get("groupByEntities", []) and "Process" not in group.get("groupByEntities", []),
+              where + "groups by a DNS or Process entity")
+        check(group.get("groupByAlertDetails") == ["DisplayName"], where + "Selected grouping does not use the alert name")
+    else:
+        check(group["matchingMethod"] == "AllEntities", where + "incident grouping drifted from AllEntities")
     check(rule["tactics"] and all(t in MITRE_TACTICS for t in rule["tactics"]), where + "unknown tactic %s" % rule["tactics"])
     check(rule["relevantTechniques"] and all(re.fullmatch(r"T\d{4}", t) for t in rule["relevantTechniques"]), where + "bad technique id")
     check(re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", str(rule["id"])), where + "id is not a GUID")
@@ -238,6 +248,10 @@ for key, rule in rules.items():
         check(item["customDetails"] == rule["customDetails"], where + "template customDetails differ")
         check(item["entityMappings"] == rule["entityMappings"], where + "template entityMappings differ")
         check(item["alertDetailsOverride"] == rule["alertDetailsOverride"], where + "template alertDetailsOverride differs")
+        expected = {"createIncident": rule["incidentConfiguration"]["createIncident"],
+                    "groupingConfiguration": dict(rule["incidentConfiguration"]["groupingConfiguration"],
+                                                  lookbackDuration="PT" + group["lookbackDuration"].upper())}
+        check(item["incidentConfiguration"] == expected, where + "template incidentConfiguration differs")
 
 ids = [r["id"] for r in rules.values()]
 check(len(set(ids)) == len(ids), "two rules share an id")
@@ -267,8 +281,7 @@ for label, resource in (("local", local[0] if local else None), ("nested", neste
     check(props["severity"] == "[parameters('ThreatHuntRuleSeverity')]", where + "severity is not the parameter")
     check(props["enabled"] is True, where + "rules are not enabled")
     check(props["eventGroupingSettings"]["aggregationKind"] == "AlertPerResult", where + "not AlertPerResult")
-    check(props["incidentConfiguration"]["groupingConfiguration"]["matchingMethod"] == "AllEntities", where + "grouping drifted")
-    for field in ("query", "tactics", "techniques", "customDetails", "entityMappings", "alertDetailsOverride", "displayName", "description"):
+    for field in ("incidentConfiguration", "query", "tactics", "techniques", "customDetails", "entityMappings", "alertDetailsOverride", "displayName", "description"):
         check("variables('threatHuntRules')[copyIndex()]." + field in props[field], where + "%s is not read from the rule variable" % field)
 
 if local:
