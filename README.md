@@ -42,6 +42,8 @@ Step by step: [docs/setup-guide.md](docs/setup-guide.md).
 | `PollingIntervalMinutes` | No | 60 | Polling interval, 5-1440 min. Use a divisor of 60 for minutes or a divisor of 24 for whole hours; other values fire unevenly (45 runs at :00 and :45, 90 runs hourly). |
 | `InitialLookbackHours` | No | 48 | Hours of history on first run (0 = all history) |
 | `EnableAuditLogging` | No | true | Log to SOCRadar_TAXII_Audit_CL |
+| `EnableThreatHuntRules` | No | true | Create the six [threat hunting rules](#threat-hunting-rules) in Microsoft Sentinel. |
+| `ThreatHuntRuleSeverity` | No | Medium | Severity of the alerts those rules raise (Informational, Low, Medium, High). |
 | `PackageUri` | No | published release | Function App deployment package. Leave the default unless you are testing a build before it is released. |
 
 Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
@@ -163,6 +165,7 @@ register that provider if you want the smart-detection alert.
 - **User-Assigned Managed Identity** - Secure access to Microsoft Sentinel and Storage
 - **DCE + DCR + Audit Table** (optional) - Audit logging to SOCRadar_TAXII_Audit_CL with per-collection entries
 - **Workbook** (optional) - SOCRadar TAXII 2.1 Dashboard with indicator analytics and audit monitoring
+- **Six analytics rules** (optional) - threat hunting rules that match the indicators against your network, DNS, web, file and process logs
 - **Deployment Script** - Automatically triggers first import after deployment
 
 ## Key Features
@@ -267,6 +270,26 @@ the upload API; a persistent 4xx needs the cause fixed. The
 (Content Hub) reports this.
 
 Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Azure portal: Microsoft Sentinel > Workbooks; Defender portal: Microsoft Sentinel > Threat management > Workbooks).
+
+## Threat hunting rules
+
+Six scheduled analytics rules compare the indicators this product writes with your own logs, through the ASIM parsers that every Microsoft Sentinel workspace has. Each match raises one alert and one incident (grouped when the same entities repeat within an hour). The rules are in `Analytic Rules/` as YAML and in `azuredeploy.json` with the same queries.
+
+| Rule | Reads | Matches |
+|------|-------|---------|
+| IP address contacted | `_Im_NetworkSession` | `DstIpAddr` against IP indicators |
+| Inbound connection from IP address | `_Im_NetworkSession` | `SrcIpAddr` against IP indicators, only sessions the device allowed |
+| Domain queried | `_Im_Dns` | `DnsQuery` against domain indicators |
+| URL requested | `_Im_WebSession` | `Url` against URL indicators |
+| File hash seen | `_Im_FileEvent` | SHA-256, SHA-1 and MD5 of the file against hash indicators |
+| Process started from a known hash | `_Im_ProcessCreate` | SHA-256, SHA-1 and MD5 of the process against hash indicators |
+
+- Only indicators with `SourceSystem == "SOCRadar TAXII"` that are active and not past `ValidUntil` are used.
+- The rules run every hour over the last 14 days of indicators and the last 2 hours of your logs. Microsoft Sentinel does not allow a lookback of 2 days or more with a run frequency below 1 hour, and 14 days is its maximum. An indicator that was not written again in the last 14 days is no longer matched.
+- Alerts carry the SOCRadar collection, confidence, valid-until date, threat labels and indicator id as custom details.
+- SHA-384 and ssdeep indicators are imported but not matched: ASIM has no field for them.
+- A rule only fires when the matching ASIM table has data. With no firewall, DNS, proxy or endpoint logs in ASIM, the rules stay quiet.
+- To stop them, set `EnableThreatHuntRules` to `false` when you deploy and delete the six rules under **Microsoft Sentinel > Configuration > Analytics** (a redeploy does not delete rules). `tests/e2e/send_asim_logs.py` sends sample events to the ASIM tables to try the rules.
 
 ## About SOCRadar
 

@@ -92,6 +92,26 @@
                 "description": "Enable audit logging to SOCRadar_TAXII_Audit_CL custom table"
             }
         },
+        "EnableThreatHuntRules": {
+            "type": "bool",
+            "defaultValue": true,
+            "metadata": {
+                "description": "Create the six SOCRadar TAXII threat hunting analytics rules in Microsoft Sentinel. They match the indicators this product writes against ASIM network, DNS, web, file and process events. Turn off to skip them."
+            }
+        },
+        "ThreatHuntRuleSeverity": {
+            "type": "string",
+            "defaultValue": "Medium",
+            "allowedValues": [
+                "Informational",
+                "Low",
+                "Medium",
+                "High"
+            ],
+            "metadata": {
+                "description": "Severity of the alerts the threat hunting rules raise."
+            }
+        },
         "_packagePushTimestamp": {
             "type": "string",
             "defaultValue": "[utcNow()]",
@@ -118,7 +138,431 @@
         "isExternalWorkspace": "[not(equals(parameters('WorkspaceResourceGroup'), resourceGroup().name))]",
         "deployWorkspace": "[and(parameters('DeployNewWorkspace'), not(variables('isExternalWorkspace')))]",
         "workspaceResourceId": "[resourceId(parameters('WorkspaceResourceGroup'), 'Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]",
-        "pollingSchedule": "[if(greaterOrEquals(parameters('PollingIntervalMinutes'), 60), concat('0 0 */', string(div(parameters('PollingIntervalMinutes'), 60)), ' * * *'), concat('0 */', string(parameters('PollingIntervalMinutes')), ' * * * *'))]"
+        "pollingSchedule": "[if(greaterOrEquals(parameters('PollingIntervalMinutes'), 60), concat('0 0 */', string(div(parameters('PollingIntervalMinutes'), 60)), ' * * *'), concat('0 */', string(parameters('PollingIntervalMinutes')), ' * * * *'))]",
+        "threatHuntRules": [
+            {
+                "key": "IP",
+                "id": "7b1d1c52-3f0e-4c07-9a53-0d6f5c2a1e11",
+                "displayName": "SOCRadar TAXII Threat Hunt - IP address contacted",
+                "description": "Correlates outbound network sessions (ASIM _Im_NetworkSession, DstIpAddr) with active IP indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. One alert per matching session.",
+                "tactics": [
+                    "CommandAndControl",
+                    "Exfiltration"
+                ],
+                "techniques": [
+                    "T1071",
+                    "T1041"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "InternalIp"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey == \"ipv4-addr:value\"\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_NetworkSession(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| where isnotempty(DstIpAddr)\n| join kind=inner Indicators on $left.DstIpAddr == $right.MatchKey\n| extend IndicatorType = \"IP address\", InternalIp = SrcIpAddr, HostName = coalesce(SrcHostname, DvcHostname), SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            },
+            {
+                "key": "InboundIP",
+                "id": "c4a3f7e8-52a1-4d3b-8c9e-6a1b0f7d2e22",
+                "displayName": "SOCRadar TAXII Threat Hunt - Inbound connection from IP address",
+                "description": "Correlates allowed inbound network sessions (ASIM _Im_NetworkSession, SrcIpAddr) with active IP indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Sessions the device denied or dropped are ignored. Recorded Future rules look at the destination only.",
+                "tactics": [
+                    "InitialAccess",
+                    "Reconnaissance"
+                ],
+                "techniques": [
+                    "T1190",
+                    "T1595"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "InternalIp"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey == \"ipv4-addr:value\"\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_NetworkSession(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| where isnotempty(SrcIpAddr)\n| where isempty(DvcAction) or DvcAction =~ \"Allow\"\n| join kind=inner Indicators on $left.SrcIpAddr == $right.MatchKey\n| extend IndicatorType = \"Inbound IP address\", InternalIp = DstIpAddr, HostName = coalesce(DstHostname, DvcHostname), SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            },
+            {
+                "key": "Domain",
+                "id": "1e9d6b30-8a47-4f5c-b2d1-3c7e9a4f5b33",
+                "displayName": "SOCRadar TAXII Threat Hunt - Domain queried",
+                "description": "Correlates DNS queries (ASIM _Im_Dns, DnsQuery) with active domain indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Comparison is case-insensitive. One alert per matching query.",
+                "tactics": [
+                    "CommandAndControl",
+                    "InitialAccess"
+                ],
+                "techniques": [
+                    "T1071",
+                    "T1566"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "DNS",
+                        "fieldMappings": [
+                            {
+                                "identifier": "DomainName",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "InternalIp"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey == \"domain-name:value\"\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_Dns(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| where isnotempty(DnsQuery)\n| extend QueryLower = tolower(DnsQuery)\n| join kind=inner Indicators on $left.QueryLower == $right.MatchKey\n| extend IndicatorType = \"Domain\", InternalIp = SrcIpAddr, HostName = coalesce(SrcHostname, DvcHostname), SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            },
+            {
+                "key": "Url",
+                "id": "9f2a8c64-0b7d-4e19-a5f3-8d1c4b6e7a44",
+                "displayName": "SOCRadar TAXII Threat Hunt - URL requested",
+                "description": "Correlates web requests (ASIM _Im_WebSession, Url) with active URL indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Comparison is case-insensitive and exact. One alert per matching request.",
+                "tactics": [
+                    "InitialAccess",
+                    "CommandAndControl"
+                ],
+                "techniques": [
+                    "T1189",
+                    "T1105"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "URL",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Url",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "IP",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Address",
+                                "columnName": "InternalIp"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey == \"url:value\"\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_WebSession(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| where isnotempty(Url)\n| extend UrlLower = tolower(Url)\n| join kind=inner Indicators on $left.UrlLower == $right.MatchKey\n| extend IndicatorType = \"URL\", InternalIp = SrcIpAddr, HostName = coalesce(SrcHostname, DvcHostname), SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            },
+            {
+                "key": "Hash",
+                "id": "5d8e2f91-6c34-4a7b-9e0d-2b5a7c3f8e55",
+                "displayName": "SOCRadar TAXII Threat Hunt - File hash seen",
+                "description": "Correlates file events (ASIM _Im_FileEvent, TargetFileSHA256, TargetFileSHA1 and TargetFileMD5) with active file hash indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Uses _Im_FileEvent, the unifying parser that is present in every workspace. One alert per matching event.",
+                "tactics": [
+                    "InitialAccess",
+                    "Execution"
+                ],
+                "techniques": [
+                    "T1189",
+                    "T1204"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "FileHash",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Algorithm",
+                                "columnName": "HashAlgorithm"
+                            },
+                            {
+                                "identifier": "Value",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "File",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Name",
+                                "columnName": "FileName"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Account",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Name",
+                                "columnName": "AccountName"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey in (\"file:hashes.sha256\", \"file:hashes.sha1\", \"file:hashes.md5\")\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_FileEvent(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| extend HashList = pack_array(TargetFileSHA256, TargetFileSHA1, TargetFileMD5)\n| mv-expand EventHash = HashList to typeof(string)\n| where isnotempty(EventHash)\n| extend EventHashLower = tolower(EventHash)\n| join kind=inner Indicators on $left.EventHashLower == $right.MatchKey\n| extend IndicatorType = case(IndicatorKey == \"file:hashes.sha256\", \"SHA256 file hash\", IndicatorKey == \"file:hashes.sha1\", \"SHA1 file hash\", \"MD5 file hash\")\n| extend HashAlgorithm = case(IndicatorKey == \"file:hashes.sha256\", \"SHA256\", IndicatorKey == \"file:hashes.sha1\", \"SHA1\", \"MD5\")\n| extend InternalIp = SrcIpAddr, HostName = coalesce(DvcHostname, SrcHostname), FileName = TargetFileName, AccountName = ActorUsername, SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, HashAlgorithm, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, FileName, AccountName, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            },
+            {
+                "key": "ProcessHash",
+                "id": "a3c7e1b5-9d20-4f68-8b14-7e6d0a2c9f66",
+                "displayName": "SOCRadar TAXII Threat Hunt - Process started from a known hash",
+                "description": "Correlates process creation events (ASIM _Im_ProcessCreate, TargetProcessSHA256, TargetProcessSHA1 and TargetProcessMD5) with active file hash indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Recorded Future has no process rule. One alert per matching process.",
+                "tactics": [
+                    "Execution",
+                    "DefenseEvasion"
+                ],
+                "techniques": [
+                    "T1204",
+                    "T1036"
+                ],
+                "customDetails": {
+                    "SOCRadarCollection": "Collection",
+                    "SOCRadarConfidence": "Confidence",
+                    "SOCRadarValidUntil": "ValidUntil",
+                    "SOCRadarIndicatorId": "IndicatorId",
+                    "SOCRadarThreatLabels": "ThreatLabels",
+                    "SourceProduct": "SourceProduct"
+                },
+                "entityMappings": [
+                    {
+                        "entityType": "FileHash",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Algorithm",
+                                "columnName": "HashAlgorithm"
+                            },
+                            {
+                                "identifier": "Value",
+                                "columnName": "MatchedValue"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Process",
+                        "fieldMappings": [
+                            {
+                                "identifier": "CommandLine",
+                                "columnName": "ProcessCommandLine"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Account",
+                        "fieldMappings": [
+                            {
+                                "identifier": "Name",
+                                "columnName": "AccountName"
+                            }
+                        ]
+                    },
+                    {
+                        "entityType": "Host",
+                        "fieldMappings": [
+                            {
+                                "identifier": "HostName",
+                                "columnName": "HostName"
+                            }
+                        ]
+                    }
+                ],
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}",
+                    "alertDescriptionFormat": "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details.",
+                    "alertDynamicProperties": [
+                        {
+                            "alertProperty": "AlertLink",
+                            "value": "LinkToSOCRadar"
+                        },
+                        {
+                            "alertProperty": "ProviderName",
+                            "value": "ProviderName"
+                        }
+                    ]
+                },
+                "query": "let dt_lookBack = 2h;\nlet ioc_lookBack = 14d;\nlet Indicators = ThreatIntelIndicators\n| where SourceSystem == \"SOCRadar TAXII\"\n| where ObservableKey in (\"file:hashes.sha256\", \"file:hashes.sha1\", \"file:hashes.md5\")\n| where isnotempty(ObservableValue)\n| where TimeGenerated >= ago(ioc_lookBack)\n| summarize arg_max(TimeGenerated, *) by Id\n| where IsActive == true and ValidUntil > now()\n| summarize arg_max(TimeGenerated, *) by ObservableValue\n| extend Collection = extract(@\"collection-([0-9a-fA-F-]{36})\", 1, tostring(Tags))\n| extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), \",\"), dynamic([\"socradar\", \"taxii\"]), pack_array(strcat(\"collection-\", Collection))), \", \")\n| project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;\n_Im_ProcessCreate(starttime = ago(dt_lookBack))\n| where TimeGenerated >= ago(dt_lookBack)\n| extend HashList = pack_array(TargetProcessSHA256, TargetProcessSHA1, TargetProcessMD5)\n| mv-expand EventHash = HashList to typeof(string)\n| where isnotempty(EventHash)\n| extend EventHashLower = tolower(EventHash)\n| join kind=inner Indicators on $left.EventHashLower == $right.MatchKey\n| extend IndicatorType = case(IndicatorKey == \"file:hashes.sha256\", \"SHA256 process hash\", IndicatorKey == \"file:hashes.sha1\", \"SHA1 process hash\", \"MD5 process hash\")\n| extend HashAlgorithm = case(IndicatorKey == \"file:hashes.sha256\", \"SHA256\", IndicatorKey == \"file:hashes.sha1\", \"SHA1\", \"MD5\")\n| extend HostName = DvcHostname, ProcessName = TargetProcessName, ProcessCommandLine = TargetProcessCommandLine, AccountName = coalesce(ActorUsername, TargetUsername), SourceProduct = EventProduct\n| extend LinkToSOCRadar = \"https://platform.socradar.com\", ProviderName = \"SOCRadar\"\n| project TimeGenerated, IndicatorType, MatchedValue, HashAlgorithm, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, ProcessName, ProcessCommandLine, AccountName, HostName, SourceProduct, LinkToSOCRadar, ProviderName"
+            }
+        ]
     },
     "resources": [
         {
@@ -457,8 +901,97 @@
                                 "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2024-11-30').principalId]",
                                 "principalType": "ServicePrincipal"
                             }
+                        },
+                        {
+                            "condition": "[parameters('EnableThreatHuntRules')]",
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+                            "apiVersion": "2024-03-01",
+                            "name": "[concat(parameters('WorkspaceName'), '/Microsoft.SecurityInsights/', variables('threatHuntRules')[copyIndex()].id)]",
+                            "kind": "Scheduled",
+                            "copy": {
+                                "name": "socradarTaxiiThreatHunt",
+                                "count": "[length(variables('threatHuntRules'))]",
+                                "mode": "Serial"
+                            },
+                            "properties": {
+                                "displayName": "[variables('threatHuntRules')[copyIndex()].displayName]",
+                                "description": "[variables('threatHuntRules')[copyIndex()].description]",
+                                "severity": "[parameters('ThreatHuntRuleSeverity')]",
+                                "enabled": true,
+                                "query": "[variables('threatHuntRules')[copyIndex()].query]",
+                                "queryFrequency": "PT1H",
+                                "queryPeriod": "P14D",
+                                "triggerOperator": "GreaterThan",
+                                "triggerThreshold": 0,
+                                "suppressionEnabled": false,
+                                "suppressionDuration": "PT5H",
+                                "tactics": "[variables('threatHuntRules')[copyIndex()].tactics]",
+                                "techniques": "[variables('threatHuntRules')[copyIndex()].techniques]",
+                                "customDetails": "[variables('threatHuntRules')[copyIndex()].customDetails]",
+                                "entityMappings": "[variables('threatHuntRules')[copyIndex()].entityMappings]",
+                                "alertDetailsOverride": "[variables('threatHuntRules')[copyIndex()].alertDetailsOverride]",
+                                "incidentConfiguration": {
+                                    "createIncident": true,
+                                    "groupingConfiguration": {
+                                        "enabled": true,
+                                        "reopenClosedIncident": false,
+                                        "lookbackDuration": "PT1H",
+                                        "matchingMethod": "AllEntities"
+                                    }
+                                },
+                                "eventGroupingSettings": {
+                                    "aggregationKind": "AlertPerResult"
+                                }
+                            }
                         }
                     ]
+                }
+            }
+        },
+        {
+            "condition": "[and(parameters('EnableThreatHuntRules'), not(variables('isExternalWorkspace')))]",
+            "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+            "apiVersion": "2024-03-01",
+            "name": "[concat(parameters('WorkspaceName'), '/Microsoft.SecurityInsights/', variables('threatHuntRules')[copyIndex()].id)]",
+            "kind": "Scheduled",
+            "copy": {
+                "name": "socradarTaxiiThreatHunt",
+                "count": "[length(variables('threatHuntRules'))]",
+                "mode": "Serial"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces/providers/onboardingStates', parameters('WorkspaceName'), 'Microsoft.SecurityInsights', 'default')]",
+                "[resourceId('Microsoft.Resources/deployments', 'precheck-workspace-exists')]",
+                "[resourceId('Microsoft.Resources/deployments', 'precheck-external-workspace')]"
+            ],
+            "properties": {
+                "displayName": "[variables('threatHuntRules')[copyIndex()].displayName]",
+                "description": "[variables('threatHuntRules')[copyIndex()].description]",
+                "severity": "[parameters('ThreatHuntRuleSeverity')]",
+                "enabled": true,
+                "query": "[variables('threatHuntRules')[copyIndex()].query]",
+                "queryFrequency": "PT1H",
+                "queryPeriod": "P14D",
+                "triggerOperator": "GreaterThan",
+                "triggerThreshold": 0,
+                "suppressionEnabled": false,
+                "suppressionDuration": "PT5H",
+                "tactics": "[variables('threatHuntRules')[copyIndex()].tactics]",
+                "techniques": "[variables('threatHuntRules')[copyIndex()].techniques]",
+                "customDetails": "[variables('threatHuntRules')[copyIndex()].customDetails]",
+                "entityMappings": "[variables('threatHuntRules')[copyIndex()].entityMappings]",
+                "alertDetailsOverride": "[variables('threatHuntRules')[copyIndex()].alertDetailsOverride]",
+                "incidentConfiguration": {
+                    "createIncident": true,
+                    "groupingConfiguration": {
+                        "enabled": true,
+                        "reopenClosedIncident": false,
+                        "lookbackDuration": "PT1H",
+                        "matchingMethod": "AllEntities"
+                    }
+                },
+                "eventGroupingSettings": {
+                    "aggregationKind": "AlertPerResult"
                 }
             }
         },
@@ -882,6 +1415,10 @@
         "workbookName": {
             "type": "string",
             "value": "[if(parameters('EnableAuditLogging'), 'SOCRadar TAXII 2.1 Dashboard', 'N/A')]"
+        },
+        "threatHuntRules": {
+            "type": "int",
+            "value": "[if(parameters('EnableThreatHuntRules'), length(variables('threatHuntRules')), 0)]"
         }
     }
 }

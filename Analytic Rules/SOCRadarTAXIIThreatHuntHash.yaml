@@ -1,0 +1,90 @@
+id: 5d8e2f91-6c34-4a7b-9e0d-2b5a7c3f8e55
+name: SOCRadar TAXII Threat Hunt - File hash seen
+description: |
+  Correlates file events (ASIM _Im_FileEvent, TargetFileSHA256, TargetFileSHA1 and TargetFileMD5) with active file hash indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Uses _Im_FileEvent, the unifying parser that is present in every workspace. One alert per matching event.
+severity: Medium
+requiredDataConnectors:
+  - connectorId: ThreatIntelligenceUploadIndicatorsAPI
+    dataTypes:
+      - ThreatIntelIndicators
+queryFrequency: 1h
+queryPeriod: 14d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Execution
+relevantTechniques:
+  - T1189
+  - T1204
+customDetails:
+  SOCRadarCollection: Collection
+  SOCRadarConfidence: Confidence
+  SOCRadarValidUntil: ValidUntil
+  SOCRadarIndicatorId: IndicatorId
+  SOCRadarThreatLabels: ThreatLabels
+  SourceProduct: SourceProduct
+incidentConfiguration:
+  createIncident: true
+  groupingConfiguration:
+    enabled: true
+    reopenClosedIncident: false
+    lookbackDuration: 1h
+    matchingMethod: AllEntities
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+alertDetailsOverride:
+  alertDisplayNameFormat: 'SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}'
+  alertDescriptionFormat: "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details."
+  alertDynamicProperties:
+    - alertProperty: AlertLink
+      value: LinkToSOCRadar
+    - alertProperty: ProviderName
+      value: ProviderName
+query: |
+  let dt_lookBack = 2h;
+  let ioc_lookBack = 14d;
+  let Indicators = ThreatIntelIndicators
+  | where SourceSystem == "SOCRadar TAXII"
+  | where ObservableKey in ("file:hashes.sha256", "file:hashes.sha1", "file:hashes.md5")
+  | where isnotempty(ObservableValue)
+  | where TimeGenerated >= ago(ioc_lookBack)
+  | summarize arg_max(TimeGenerated, *) by Id
+  | where IsActive == true and ValidUntil > now()
+  | summarize arg_max(TimeGenerated, *) by ObservableValue
+  | extend Collection = extract(@"collection-([0-9a-fA-F-]{36})", 1, tostring(Tags))
+  | extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), ","), dynamic(["socradar", "taxii"]), pack_array(strcat("collection-", Collection))), ", ")
+  | project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;
+  _Im_FileEvent(starttime = ago(dt_lookBack))
+  | where TimeGenerated >= ago(dt_lookBack)
+  | extend HashList = pack_array(TargetFileSHA256, TargetFileSHA1, TargetFileMD5)
+  | mv-expand EventHash = HashList to typeof(string)
+  | where isnotempty(EventHash)
+  | extend EventHashLower = tolower(EventHash)
+  | join kind=inner Indicators on $left.EventHashLower == $right.MatchKey
+  | extend IndicatorType = case(IndicatorKey == "file:hashes.sha256", "SHA256 file hash", IndicatorKey == "file:hashes.sha1", "SHA1 file hash", "MD5 file hash")
+  | extend HashAlgorithm = case(IndicatorKey == "file:hashes.sha256", "SHA256", IndicatorKey == "file:hashes.sha1", "SHA1", "MD5")
+  | extend InternalIp = SrcIpAddr, HostName = coalesce(DvcHostname, SrcHostname), FileName = TargetFileName, AccountName = ActorUsername, SourceProduct = EventProduct
+  | extend LinkToSOCRadar = "https://platform.socradar.com", ProviderName = "SOCRadar"
+  | project TimeGenerated, IndicatorType, MatchedValue, HashAlgorithm, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, FileName, AccountName, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName
+entityMappings:
+  - entityType: FileHash
+    fieldMappings:
+      - identifier: Algorithm
+        columnName: HashAlgorithm
+      - identifier: Value
+        columnName: MatchedValue
+  - entityType: File
+    fieldMappings:
+      - identifier: Name
+        columnName: FileName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: HostName
+version: 1.0.0
+kind: Scheduled

@@ -65,6 +65,10 @@ ThreatIntelIndicators
 
 The first rows can take a few minutes after the first run. They also show under Microsoft Sentinel > Threat management > Threat intelligence (Azure portal) or Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace). In the Defender portal, Advanced hunting on `ThreatIntelIndicators` also reads secondary workspaces.
 
+## 3.3 Threat hunting rules
+
+Microsoft Sentinel > Configuration > Analytics: six rules named `SOCRadar TAXII Threat Hunt - ...`, all enabled. They run every hour. An alert appears when a log line in the ASIM tables carries an indicator value (see "Threat hunting rules" in the README). Set `EnableThreatHuntRules` to `false` in step 2.1 to skip them.
+
 ## 4. Workspace in another resource group
 
 Set `WorkspaceResourceGroup` to the group that holds the workspace. You also need Owner or User Access Administrator there. See "Workspace in another resource group" in the README.

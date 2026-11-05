@@ -1,0 +1,79 @@
+id: 7b1d1c52-3f0e-4c07-9a53-0d6f5c2a1e11
+name: SOCRadar TAXII Threat Hunt - IP address contacted
+description: |
+  Correlates outbound network sessions (ASIM _Im_NetworkSession, DstIpAddr) with active IP indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. One alert per matching session.
+severity: Medium
+requiredDataConnectors:
+  - connectorId: ThreatIntelligenceUploadIndicatorsAPI
+    dataTypes:
+      - ThreatIntelIndicators
+queryFrequency: 1h
+queryPeriod: 14d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - CommandAndControl
+  - Exfiltration
+relevantTechniques:
+  - T1071
+  - T1041
+customDetails:
+  SOCRadarCollection: Collection
+  SOCRadarConfidence: Confidence
+  SOCRadarValidUntil: ValidUntil
+  SOCRadarIndicatorId: IndicatorId
+  SOCRadarThreatLabels: ThreatLabels
+  SourceProduct: SourceProduct
+incidentConfiguration:
+  createIncident: true
+  groupingConfiguration:
+    enabled: true
+    reopenClosedIncident: false
+    lookbackDuration: 1h
+    matchingMethod: AllEntities
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+alertDetailsOverride:
+  alertDisplayNameFormat: 'SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}'
+  alertDescriptionFormat: "The SOCRadar TAXII feed lists {{MatchedValue}} ({{IndicatorType}}); it was seen in {{SourceProduct}} telemetry. Confidence, validity, threat labels and collection are in the custom details."
+  alertDynamicProperties:
+    - alertProperty: AlertLink
+      value: LinkToSOCRadar
+    - alertProperty: ProviderName
+      value: ProviderName
+query: |
+  let dt_lookBack = 2h;
+  let ioc_lookBack = 14d;
+  let Indicators = ThreatIntelIndicators
+  | where SourceSystem == "SOCRadar TAXII"
+  | where ObservableKey == "ipv4-addr:value"
+  | where isnotempty(ObservableValue)
+  | where TimeGenerated >= ago(ioc_lookBack)
+  | summarize arg_max(TimeGenerated, *) by Id
+  | where IsActive == true and ValidUntil > now()
+  | summarize arg_max(TimeGenerated, *) by ObservableValue
+  | extend Collection = extract(@"collection-([0-9a-fA-F-]{36})", 1, tostring(Tags))
+  | extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), ","), dynamic(["socradar", "taxii"]), pack_array(strcat("collection-", Collection))), ", ")
+  | project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;
+  _Im_NetworkSession(starttime = ago(dt_lookBack))
+  | where TimeGenerated >= ago(dt_lookBack)
+  | where isnotempty(DstIpAddr)
+  | join kind=inner Indicators on $left.DstIpAddr == $right.MatchKey
+  | extend IndicatorType = "IP address", InternalIp = SrcIpAddr, HostName = coalesce(SrcHostname, DvcHostname), SourceProduct = EventProduct
+  | extend LinkToSOCRadar = "https://platform.socradar.com", ProviderName = "SOCRadar"
+  | project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName
+entityMappings:
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: MatchedValue
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: InternalIp
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: HostName
+version: 1.0.0
+kind: Scheduled
