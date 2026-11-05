@@ -15,6 +15,7 @@ indicators.json: {"ip": ..., "ip_inbound": ..., "ip_denied": ..., "domain": ...,
                   "sha256": ..., "sha1": ..., "md5": ...} with live values from the workspace.
 
 ASIM_TABLES=ASimDnsActivityLogs,... limits `send` to those tables.
+ASIM_STAMP=2026-01-01T10:00:00.000Z gives every event that time, to send the same events twice.
 Needs the Azure CLI, signed in, with permission to create a DCR and a role assignment.
 """
 
@@ -90,7 +91,7 @@ def setup(rg, workspace):
 
 def events(ind):
     now = datetime.datetime.now(datetime.timezone.utc)
-    stamp = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    stamp = os.environ.get("ASIM_STAMP") or now.strftime("%Y-%m-%dT%H:%M:%S.000Z")   # fixed stamp resends the same events
 
     def row(table, **fields):
         schema, version, etype = SCHEMA[table]
