@@ -146,7 +146,7 @@ ENTITY_IDENTIFIERS = {"IP": {"Address"}, "DNS": {"DomainName"}, "URL": {"Url"}, 
                       "File": {"Name", "Directory"}, "FileHash": {"Algorithm", "Value"},
                       "Account": {"Name"}, "Process": {"CommandLine", "ProcessId"}}
 ASIM_PARSER = {"IP": "_Im_NetworkSession", "InboundIP": "_Im_NetworkSession", "Domain": "_Im_Dns",
-               "Url": "_Im_WebSession", "Hash": "_Im_FileEvent", "ProcessHash": "_Im_ProcessCreate"}
+               "Url": "_Im_WebSession", "Hash": "_Im_FileEvent", "ProcessHash": "_Im_ProcessEvent"}
 
 
 def minutes(text):

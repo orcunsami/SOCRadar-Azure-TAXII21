@@ -40,7 +40,7 @@ STREAMS = {
                              "TargetProcessCommandLine", "ActorUsername"],
 }
 SCHEMA = {"ASimNetworkSessionLogs": ("NetworkSession", "0.2.7", "NetworkSession"),
-          "ASimDnsActivityLogs": ("Dns", "0.1.7", "DnsQuery"),
+          "ASimDnsActivityLogs": ("Dns", "0.1.7", "Query"),
           "ASimWebSessionLogs": ("WebSession", "0.2.7", "HTTPsession"),
           "ASimFileEventLogs": ("FileEvent", "0.2.1", "FileCreated"),
           "ASimProcessEventLogs": ("ProcessEvent", "0.1.4", "ProcessCreated")}
@@ -109,6 +109,9 @@ def events(ind):
     if ind.get("sha1"):
         fil.append(row("ASimFileEventLogs", TargetFileSHA1=ind["sha1"], TargetFileName="update.bin", TargetFilePath="C:\\Temp\\update.bin",
                        ActorUsername="e2e.user", SrcIpAddr="10.20.30.45", DvcHostname="e2e-host-file-sha1"))
+    if ind.get("md5"):
+        proc.append(row("ASimProcessEventLogs", TargetProcessMD5=ind["md5"], TargetProcessName="agent.exe",
+                        TargetProcessCommandLine="agent.exe -run", ActorUsername="e2e.user", DvcHostname="e2e-host-proc-md5"))
     proc.append(row("ASimProcessEventLogs", TargetProcessSHA256=ind["sha256"], TargetProcessName="invoice.exe",
                     TargetProcessCommandLine="invoice.exe /silent", ActorUsername="e2e.user", DvcHostname="e2e-host-proc"))
     # controls that must NOT alert: denied inbound, benign values

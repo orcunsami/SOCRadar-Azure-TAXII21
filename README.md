@@ -282,7 +282,7 @@ Six scheduled analytics rules compare the indicators this product writes with yo
 | Domain queried | `_Im_Dns` | `DnsQuery` against domain indicators |
 | URL requested | `_Im_WebSession` | `Url` against URL indicators |
 | File hash seen | `_Im_FileEvent` | SHA-256, SHA-1 and MD5 of the file against hash indicators |
-| Process started from a known hash | `_Im_ProcessCreate` | SHA-256, SHA-1 and MD5 of the process against hash indicators |
+| Process started from a known hash | `_Im_ProcessEvent` (ProcessCreated) | SHA-256, SHA-1 and MD5 of the process against hash indicators |
 
 - Only indicators with `SourceSystem == "SOCRadar TAXII"` that are active and not past `ValidUntil` are used.
 - The rules run every hour over the last 14 days of indicators and the last 2 hours of your logs. Microsoft Sentinel does not allow a lookback of 2 days or more with a run frequency below 1 hour, and 14 days is its maximum. An indicator that was not written again in the last 14 days is no longer matched.

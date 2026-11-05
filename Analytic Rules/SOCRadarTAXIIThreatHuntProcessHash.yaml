@@ -1,7 +1,7 @@
 id: a3c7e1b5-9d20-4f68-8b14-7e6d0a2c9f66
 name: SOCRadar TAXII Threat Hunt - Process started from a known hash
 description: |
-  Correlates process creation events (ASIM _Im_ProcessCreate, TargetProcessSHA256, TargetProcessSHA1 and TargetProcessMD5) with active file hash indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Recorded Future has no process rule. One alert per matching process.
+  Correlates process creation events (ASIM _Im_ProcessEvent filtered to ProcessCreated, TargetProcessSHA256, TargetProcessSHA1 and TargetProcessMD5) with active file hash indicators that the SOCRadar TAXII 2.1 Function App wrote to ThreatIntelIndicators. Recorded Future has no process rule. One alert per matching process.
 severity: Medium
 requiredDataConnectors:
   - connectorId: ThreatIntelligenceUploadIndicatorsAPI
@@ -55,7 +55,7 @@ query: |
   | extend Collection = extract(@"collection-([0-9a-fA-F-]{36})", 1, tostring(Tags))
   | extend ThreatLabels = strcat_array(set_difference(split(tostring(Tags), ","), dynamic(["socradar", "taxii"]), pack_array(strcat("collection-", Collection))), ", ")
   | project IndicatorId = Id, MatchedValue = ObservableValue, MatchKey = tolower(ObservableValue), IndicatorKey = ObservableKey, Confidence, ValidUntil, Collection, ThreatLabels;
-  _Im_ProcessCreate(starttime = ago(dt_lookBack))
+  _Im_ProcessEvent(starttime = ago(dt_lookBack), eventtypefilter = "ProcessCreated")
   | where TimeGenerated >= ago(dt_lookBack)
   | extend HashList = pack_array(TargetProcessSHA256, TargetProcessSHA1, TargetProcessMD5)
   | mv-expand EventHash = HashList to typeof(string)
