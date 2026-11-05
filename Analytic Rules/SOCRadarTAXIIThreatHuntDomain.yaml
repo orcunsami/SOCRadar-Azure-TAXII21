@@ -24,6 +24,7 @@ customDetails:
   SOCRadarIndicatorId: IndicatorId
   SOCRadarThreatLabels: ThreatLabels
   SourceProduct: SourceProduct
+  EventKey: EventKey
 incidentConfiguration:
   createIncident: true
   groupingConfiguration:
@@ -49,6 +50,11 @@ alertDetailsOverride:
 query: |
   let dt_lookBack = 2h;
   let ioc_lookBack = 14d;
+  let alerted = SecurityAlert
+  | where TimeGenerated > ago(4h)
+  | where tostring(parse_json(ExtendedProperties)["Analytic Rule Name"]) == "SOCRadar TAXII Threat Hunt - Domain queried"
+  | extend EventKey = tostring(parse_json(tostring(parse_json(ExtendedProperties)["Custom Details"])).EventKey[0])
+  | distinct EventKey;
   let Indicators = ThreatIntelIndicators
   | where SourceSystem == "SOCRadar TAXII"
   | where ObservableKey == "domain-name:value"
@@ -67,7 +73,9 @@ query: |
   | join kind=inner Indicators on $left.QueryLower == $right.MatchKey
   | extend IndicatorType = "Domain", InternalIp = SrcIpAddr, HostName = coalesce(SrcHostname, DvcHostname), SourceProduct = EventProduct
   | extend LinkToSOCRadar = "https://platform.socradar.com", ProviderName = "SOCRadar"
-  | project TimeGenerated, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName
+  | extend EventKey = strcat(MatchedValue, "|", HostName, "|", tostring(TimeGenerated))
+  | where EventKey !in (alerted)
+  | project TimeGenerated, EventKey, IndicatorType, MatchedValue, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, InternalIp, HostName, SourceProduct, LinkToSOCRadar, ProviderName
 entityMappings:
   - entityType: DNS
     fieldMappings:

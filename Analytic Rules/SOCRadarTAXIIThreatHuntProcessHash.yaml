@@ -25,6 +25,7 @@ customDetails:
   SOCRadarThreatLabels: ThreatLabels
   SourceProduct: SourceProduct
   ProcessCommandLine: ProcessCommandLine
+  EventKey: EventKey
 incidentConfiguration:
   createIncident: true
   groupingConfiguration:
@@ -45,6 +46,11 @@ alertDetailsOverride:
 query: |
   let dt_lookBack = 2h;
   let ioc_lookBack = 14d;
+  let alerted = SecurityAlert
+  | where TimeGenerated > ago(4h)
+  | where tostring(parse_json(ExtendedProperties)["Analytic Rule Name"]) == "SOCRadar TAXII Threat Hunt - Process started from a known hash"
+  | extend EventKey = tostring(parse_json(tostring(parse_json(ExtendedProperties)["Custom Details"])).EventKey[0])
+  | distinct EventKey;
   let Indicators = ThreatIntelIndicators
   | where SourceSystem == "SOCRadar TAXII"
   | where ObservableKey in ("file:hashes.sha256", "file:hashes.sha1", "file:hashes.md5")
@@ -67,7 +73,9 @@ query: |
   | extend HashAlgorithm = case(IndicatorKey == "file:hashes.sha256", "SHA256", IndicatorKey == "file:hashes.sha1", "SHA1", "MD5")
   | extend HostName = DvcHostname, ProcessName = TargetProcessName, ProcessCommandLine = TargetProcessCommandLine, AccountName = coalesce(ActorUsername, TargetUsername), SourceProduct = EventProduct
   | extend LinkToSOCRadar = "https://platform.socradar.com", ProviderName = "SOCRadar"
-  | project TimeGenerated, IndicatorType, MatchedValue, HashAlgorithm, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, ProcessName, ProcessCommandLine, AccountName, HostName, SourceProduct, LinkToSOCRadar, ProviderName
+  | extend EventKey = strcat(MatchedValue, "|", HostName, "|", tostring(TimeGenerated))
+  | where EventKey !in (alerted)
+  | project TimeGenerated, EventKey, IndicatorType, MatchedValue, HashAlgorithm, IndicatorId, Confidence, ValidUntil, Collection, ThreatLabels, ProcessName, ProcessCommandLine, AccountName, HostName, SourceProduct, LinkToSOCRadar, ProviderName
 entityMappings:
   - entityType: FileHash
     fieldMappings:

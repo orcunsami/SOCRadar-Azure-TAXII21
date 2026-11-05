@@ -149,6 +149,11 @@ ASIM_PARSER = {"IP": "_Im_NetworkSession", "InboundIP": "_Im_NetworkSession", "D
                "Url": "_Im_WebSession", "Hash": "_Im_FileEvent", "ProcessHash": "_Im_ProcessEvent"}
 
 
+# Domain and Process alerts carry entities Sentinel never matches under AllEntities, so Domain groups on other fields
+GROUPING = {k: ([], []) for k in KEYS}
+GROUPING["Domain"] = (["IP", "Host"], ["DisplayName"])
+
+
 def minutes(text):
     match = re.fullmatch(r"(\d+)([mhd])", text)
     return int(match.group(1)) * {"m": 1, "h": 60, "d": 1440}[match.group(2)]
@@ -195,6 +200,17 @@ for key, rule in rules.items():
     # KQL aliases first/last are reserved (SYN0002)
     check(not re.search(r"\b(first|last)\s*=", query), where + "uses a reserved alias (first/last)")
 
+    # an event raises one alert: the window is wider than the frequency, so a run skips the events an earlier run
+    # already alerted on. The key is stored on the alert as a custom detail and read back from SecurityAlert.
+    check("let alerted = SecurityAlert\n| where TimeGenerated > ago(4h)\n" in query, where + "no `alerted` set read from SecurityAlert over the last 4 hours")
+    check('| where tostring(parse_json(ExtendedProperties)["Analytic Rule Name"]) == "%s"\n' % rule["name"] in query,
+          where + "the alerted set is not limited to this rule's own alerts (name must equal the rule displayName)")
+    check('.EventKey[0])\n| distinct EventKey;' in query, where + "the alerted set does not read the EventKey custom detail")
+    check('| extend EventKey = strcat(MatchedValue, "|", HostName, "|", tostring(TimeGenerated))\n' in query, where + "no EventKey (indicator value, host, event time)")
+    check("| where EventKey !in (alerted)\n" in query, where + "events that already raised an alert are not skipped")
+    check(rule["customDetails"].get("EventKey") == "EventKey", where + "EventKey is not a custom detail, so the next run cannot read it back")
+    check("EventKey" in final_projection(query), where + "the projection drops EventKey")
+
     # every column a rule consumes is produced by the final project
     projected = final_projection(query)
     check("TimeGenerated" in projected, where + "the projection drops TimeGenerated, the engine needs it")
@@ -235,6 +251,18 @@ for key, rule in rules.items():
     check(rule["relevantTechniques"] and all(re.fullmatch(r"T\d{4}", t) for t in rule["relevantTechniques"]), where + "bad technique id")
     check(re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", str(rule["id"])), where + "id is not a GUID")
     check(rule["kind"] == "Scheduled", where + "not a Scheduled rule")
+    check(rule["severity"] == "Medium", where + "yaml severity is %r" % rule["severity"])
+    connector = rule["requiredDataConnectors"][0]
+    check(connector["connectorId"] == "ThreatIntelligenceUploadIndicatorsAPI" and connector["dataTypes"] == ["ThreatIntelIndicators"],
+          where + "required data connector")
+    check(rule["triggerOperator"] == "gt" and rule["triggerThreshold"] == 0, where + "trigger is not gt 0")
+    check(rule["incidentConfiguration"]["createIncident"] is True, where + "createIncident is off")
+    want_by_entities, want_by_details = GROUPING[key]
+    check(group.get("groupByEntities", []) == want_by_entities and group.get("groupByAlertDetails", []) == want_by_details,
+          where + "grouping fields %r / %r, expected %r / %r" % (group.get("groupByEntities"), group.get("groupByAlertDetails"), want_by_entities, want_by_details))
+    # the yaml holds the text as written: an escaped \\n kept literally would show up as backslash-n in the alert
+    for fmt in ("alertDisplayNameFormat", "alertDescriptionFormat"):
+        check("\\n" not in rule["alertDetailsOverride"][fmt], where + "%s carries a literal backslash-n" % fmt)
 
     # the template carries the same rule
     item = variable.get(key)
@@ -280,6 +308,8 @@ for label, resource in (("local", local[0] if local else None), ("nested", neste
     check(props["queryFrequency"] == "PT1H" and props["queryPeriod"] == "P14D", where + "schedule is not PT1H / P14D")
     check(props["severity"] == "[parameters('ThreatHuntRuleSeverity')]", where + "severity is not the parameter")
     check(props["enabled"] is True, where + "rules are not enabled")
+    check(props["triggerOperator"] == "GreaterThan" and props["triggerThreshold"] == 0, where + "trigger is not GreaterThan 0")
+    check(props["suppressionEnabled"] is False, where + "suppression must be off")
     check(props["eventGroupingSettings"]["aggregationKind"] == "AlertPerResult", where + "not AlertPerResult")
     for field in ("incidentConfiguration", "query", "tactics", "techniques", "customDetails", "entityMappings", "alertDetailsOverride", "displayName", "description"):
         check("variables('threatHuntRules')[copyIndex()]." + field in props[field], where + "%s is not read from the rule variable" % field)
