@@ -273,7 +273,7 @@ Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook
 
 ## Threat hunting rules
 
-Six scheduled analytics rules compare the indicators this product writes with your own logs, through the ASIM parsers that every Microsoft Sentinel workspace has. Each match raises one alert and one incident (grouped when the same entities repeat within an hour). The rules are in `Analytic Rules/` as YAML and in `azuredeploy.json` with the same queries.
+Six scheduled analytics rules compare the indicators this product writes with your own logs, through the ASIM parsers that every Microsoft Sentinel workspace has. Each match raises one alert. Alerts for the same entities within an hour join one incident (the domain rule groups by client IP, host and domain). The rules are in `Analytic Rules/` as YAML and in `azuredeploy.json` with the same queries.
 
 | Rule | Reads | Matches |
 |------|-------|---------|
@@ -285,7 +285,7 @@ Six scheduled analytics rules compare the indicators this product writes with yo
 | Process started from a known hash | `_Im_ProcessEvent` (ProcessCreated) | SHA-256, SHA-1 and MD5 of the process against hash indicators |
 
 - Only indicators with `SourceSystem == "SOCRadar TAXII"` that are active and not past `ValidUntil` are used.
-- The rules run every hour over the last 14 days of indicators and the last 2 hours of your logs. Microsoft Sentinel does not allow a lookback of 2 days or more with a run frequency below 1 hour, and 14 days is its maximum. An indicator that was not written again in the last 14 days is no longer matched.
+- The rules run every hour over the last 14 days of indicators and the last 2 hours of your logs. Microsoft Sentinel does not allow a lookback of 2 days or more with a run frequency below 1 hour, and 14 days is its maximum. An indicator that was not written again in the last 14 days is no longer matched. A log line is inside the window of two runs, so it can raise two alerts; they land in the same incident.
 - Alerts carry the SOCRadar collection, confidence, valid-until date, threat labels and indicator id as custom details.
 - SHA-384 and ssdeep indicators are imported but not matched: ASIM has no field for them.
 - A rule only fires when the matching ASIM table has data. With no firewall, DNS, proxy or endpoint logs in ASIM, the rules stay quiet.

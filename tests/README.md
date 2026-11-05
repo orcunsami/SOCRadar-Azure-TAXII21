@@ -24,6 +24,7 @@ would never see.
 | `test_last_page_checkpoint.py` | The last page is not re-fetched on every run, and `more=true` with no `next` cursor stops instead of looping. |
 | `test_revoked_upload.py` | Revoked indicators are sent flagged as revoked, and counted separately. |
 | `test_package_push.py` | The package is staged as a blob and re-pushed on redeploy. |
+| `test_threat_hunt_rules.py` | The six threat hunting rules in `Analytic Rules/` and in the template are the same, filter on the stamp the indicators really carry (`SourceSystem`, not the mostly empty `description`), use the hash keys the feed writes, stay inside the limits Microsoft Sentinel enforces at create time (2 days or more of lookback needs an hourly run, at most 3 parameters in a description format, DNS and Process entities do not group under AllEntities), and project every column the entities, custom details and alert text use. |
 | `test_workspace_precheck.py` | The workspace pre-check exists, can fail, and runs before anything is created, and the template has no `reference(concat(` (ARM-TTK). |
 
 `_harness.py` holds the stubs. The Function App only talks to the outside world
