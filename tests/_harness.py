@@ -11,6 +11,8 @@ import os
 import sys
 import types
 
+_UNSET = object()
+
 logging.disable(logging.CRITICAL)
 
 # `requests` is a deployment dependency, not a test dependency: every call it
@@ -39,13 +41,16 @@ if FUNCTION_APP not in sys.path:
 
 
 class Response:
-    def __init__(self, status_code, payload=None, headers=None, text=None):
+    def __init__(self, status_code, payload=_UNSET, headers=None, text=None):
         self.status_code = status_code
-        self._payload = payload if payload is not None else {}
+        implicit_empty_200 = payload is _UNSET and status_code == 200
+        self._payload = {} if payload is _UNSET else payload
         self.headers = headers or {}
-        self.text = text if text is not None else "body"
+        self.text = text if text is not None else ("" if implicit_empty_200 else "body")
 
     def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
         return self._payload
 
 
@@ -78,7 +83,8 @@ class FakeRequests:
 
     def post(self, url, **kwargs):
         self.post_bodies.append(kwargs.get("json") or {})
-        return self._next(self.post_responses, self.post_calls, (url, len((kwargs.get("json") or {}).get("indicators", []))))
+        return self._next(self.post_responses, self.post_calls,
+                          (url, len((kwargs.get("json") or {}).get("stixobjects", []))))
 
 
 class FakeTable:

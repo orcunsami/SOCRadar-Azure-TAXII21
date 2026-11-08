@@ -22,7 +22,12 @@ MUTATIONS = [
   '''            if page_failed:''','''            if False:''',
   "tests/test_upload_failure_keeps_checkpoint.py"),
  ("failed counted as skipped","FunctionApp/taxii_processor.py",
-  '''        return 0, 0, len(indicators)''','''        return 0, len(indicators), 0''',
+  '''        logger.error("Upload failed after %d attempt(s): %d %s",
+                     attempt, resp.status_code, resp.text[:500])
+        return 0, 0, len(indicators), set()''',
+  '''        logger.error("Upload failed after %d attempt(s): %d %s",
+                     attempt, resp.status_code, resp.text[:500])
+        return 0, len(indicators), 0, set()''',
   "tests/test_upload_failure_keeps_checkpoint.py"),
  ("status always Success","FunctionApp/function_app.py",
   '''            if lost or not result["complete"]:''','''            if False:''',
@@ -487,6 +492,54 @@ MUTATIONS = [
   "tests/test_threat_hunt_rules.py"),
  ('hunt text: yaml display name with a literal backslash-n', "Analytic Rules/SOCRadarTAXIIThreatHuntUrl.yaml", "alertDisplayNameFormat: 'SOCRadar TAXII {{IndicatorType}} match: {{MatchedValue}}'", "alertDisplayNameFormat: 'SOCRadar TAXII\\n{{IndicatorType}} match: {{MatchedValue}}'",
   "tests/test_threat_hunt_rules.py"),
+ ("stix product endpoint reverted", "FunctionApp/taxii_processor.py",
+  '''SENTINEL_UPLOAD_URL = "https://api.ti.sentinel.azure.com/workspaces/{workspace_id}/threat-intelligence-stix-objects:upload"''',
+  '''SENTINEL_UPLOAD_URL = "https://sentinelus.azure-api.net/workspaces/{workspace_id}/threatintelligenceindicators:upload"''',
+  "tests/test_stix_upload.py"),
+ ("stix API version reverted", "FunctionApp/taxii_processor.py",
+  '''url += "?api-version=2024-02-01-preview"''', '''url += "?api-version=2022-07-01"''',
+  "tests/test_stix_upload.py"),
+ ("stix legacy envelope key", "FunctionApp/taxii_processor.py",
+  '''            "stixobjects": indicators,''', '''            "indicators": indicators,''',
+  "tests/test_stix_upload.py"),
+ ("stix source impersonates Sentinel", "FunctionApp/taxii_processor.py",
+  '''            "sourcesystem": "SOCRadar TAXII",''', '''            "sourcesystem": "Microsoft Sentinel",''',
+  "tests/test_stix_upload.py"),
+ ("stix accepts 101 objects", "FunctionApp/taxii_processor.py",
+  '''        if len(indicators) > 100:''', '''        if len(indicators) > 101:''',
+  "tests/test_stix_upload.py"),
+ ("stix rejections ignored", "FunctionApp/taxii_processor.py",
+  '''                        rejected.add(index)''', '''                        pass''',
+  "tests/test_stix_upload.py"),
+ ("stix rejection index shifted", "FunctionApp/taxii_processor.py",
+  '''                        rejected.add(index)''', '''                        rejected.add(index + 1)''',
+  "tests/test_stix_upload.py"),
+ ("stix boolean index accepted", "FunctionApp/taxii_processor.py",
+  '''                        if type(index) is not int or not 0 <= index < len(indicators):''',
+  '''                        if type(index) is not int and not 0 <= index < len(indicators):''',
+  "tests/test_stix_upload.py"),
+ ("stix malformed 200 accepted", "FunctionApp/taxii_processor.py",
+  '''                    if not isinstance(result, dict) or not isinstance(result.get("errors"), list):
+                        raise ValueError("Invalid upload response")
+                    errors = result["errors"]''',
+  '''                    if not isinstance(result, dict) or not isinstance(result.get("errors", []), list):
+                        raise ValueError("Invalid upload response")
+                    errors = result.get("errors", [])''',
+  "tests/test_stix_upload.py"),
+ ("stix failed page advances checkpoint", "FunctionApp/taxii_processor.py",
+  '''                self.save_checkpoint(cursor, added_after, total_created, pages_fetched)
+                complete = False
+                break
+
+            # more=true with no cursor''',
+  '''                self.save_checkpoint(next_cursor or cursor, added_after, total_created, pages_fetched)
+                complete = False
+                break
+
+            # more=true with no cursor''',
+  "tests/test_stix_upload.py"),
+ ("stix retry cap widened", "FunctionApp/taxii_processor.py",
+  '''MAX_ATTEMPTS = 3''', '''MAX_ATTEMPTS = 10''', "tests/test_stix_upload.py"),
 ]
 # optional filter: `python3 tests/mutate.py hunt` runs only the mutations of the threat hunting rules (the full list takes about an hour)
 ONLY=sys.argv[1] if len(sys.argv)>1 else ""

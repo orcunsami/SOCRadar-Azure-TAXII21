@@ -16,7 +16,7 @@ from stix_parser import prepare_for_sentinel
 logger = logging.getLogger(__name__)
 
 TAXII_BASE_URL = "https://taxii2.socradar.com"
-SENTINEL_UPLOAD_URL = "https://sentinelus.azure-api.net/workspaces/{workspace_id}/threatintelligenceindicators:upload"
+SENTINEL_UPLOAD_URL = "https://api.ti.sentinel.azure.com/workspaces/{workspace_id}/threat-intelligence-stix-objects:upload"
 BATCH_SIZE = 100
 PAGE_LIMIT = 100
 
@@ -165,9 +165,12 @@ class TaxiiProcessor:
         so the caller can tell a revoked indicator that landed from one that
         did not.
         """
+        if len(indicators) > 100:
+            logger.error("Upload batch exceeds the 100-object limit")
+            return 0, 0, len(indicators), set()
         token = self._get_mgmt_token()
         url = SENTINEL_UPLOAD_URL.format(workspace_id=self.workspace_id)
-        url += "?api-version=2022-07-01"
+        url += "?api-version=2024-02-01-preview"
 
         headers = {
             "Authorization": "Bearer {}".format(token),
@@ -175,19 +178,29 @@ class TaxiiProcessor:
         }
         body = {
             "sourcesystem": "SOCRadar TAXII",
-            "indicators": indicators,
+            "stixobjects": indicators,
         }
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             resp = requests.post(url, headers=headers, json=body, timeout=60)
 
             if resp.status_code == 200:
-                result = resp.json() if resp.text else {}
-                errors = result.get("errors", [])
-                skipped = len(errors)
+                try:
+                    result = resp.json() if resp.text.strip() else {"errors": []}
+                    if not isinstance(result, dict) or not isinstance(result.get("errors"), list):
+                        raise ValueError("Invalid upload response")
+                    errors = result["errors"]
+                    rejected = set()
+                    for error in errors:
+                        index = error.get("recordIndex") if isinstance(error, dict) else None
+                        if type(index) is not int or not 0 <= index < len(indicators):
+                            raise ValueError("Invalid rejection index")
+                        rejected.add(index)
+                except (ValueError, TypeError):
+                    logger.error("Upload returned an unreadable validation response; holding the checkpoint")
+                    return 0, 0, len(indicators), set()
+                skipped = len(rejected)
                 created = len(indicators) - skipped
-                rejected = {e.get("recordIndex") for e in errors
-                            if isinstance(e, dict) and isinstance(e.get("recordIndex"), int)}
                 if errors:
                     logger.warning("Upload batch had %d errors: %s", skipped, str(errors[:3])[:500])
                 return created, skipped, 0, rejected

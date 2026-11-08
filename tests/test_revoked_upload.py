@@ -41,7 +41,7 @@ withdrawn = indicator("2.2.2.2", revoked=True, modified="2026-09-06T00:00:00.000
 # 1. Both are uploaded; the revoked one keeps its flag and is counted as
 #    revoked rather than created.
 result, stub, _ = run([live, withdrawn], [Response(200, {"errors": []})])
-sent = stub.post_bodies[0].get("indicators", []) if stub.post_bodies else []
+sent = stub.post_bodies[0].get("stixobjects", []) if stub.post_bodies else []
 check(len(sent) == 2, "expected both indicators in the upload, got %d" % len(sent))
 by_id = {i.get("id"): i for i in sent}
 check(by_id.get(withdrawn["id"], {}).get("revoked") is True,
@@ -58,7 +58,7 @@ check(result["complete"] is True, "clean run reported incomplete")
 broken = dict(withdrawn, id="indicator--broken")
 del broken["pattern"]
 result, stub, _ = run([live, broken], [Response(200, {"errors": []})])
-sent = stub.post_bodies[0].get("indicators", []) if stub.post_bodies else []
+sent = stub.post_bodies[0].get("stixobjects", []) if stub.post_bodies else []
 check(len(sent) == 1 and sent[0]["id"] == live["id"], "a revoked object without a pattern was uploaded")
 check(result["indicators_revoked"] == 0, "an unsendable revoked object was counted as revoked")
 
