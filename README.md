@@ -173,7 +173,7 @@ register that provider if you want the smart-detection alert.
 - Multi-collection support (multiple API roots in one deployment)
 - STIX 2.1 indicator parsing (IP, domain, URL, file hash, email)
 - Cursor-based pagination with per-collection checkpoint storage
-- Batch upload to Microsoft Sentinel's STIX objects upload API (`api.ti.sentinel.azure.com`, `2024-02-01-preview`, at most 100 objects/batch); an empty HTTP 200 accepts the batch, validation errors identify skipped objects by zero-based `recordIndex`, and an unreadable response holds the checkpoint
+- STIX upload via `api.ti.sentinel.azure.com` (`2024-02-01-preview`), up to 100 objects per batch; partial rejections count as skipped
 - Per-collection error handling (one failure doesn't stop others)
 - Managed Identity access to Microsoft Sentinel, Table storage and Azure Monitor (the TAXII password and the storage key are stored as app settings)
 - Automatic first run after deployment

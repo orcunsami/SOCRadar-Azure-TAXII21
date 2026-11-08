@@ -29,7 +29,9 @@ def upload(responses, batch=None, **kwargs):
 
 
 # Pin the exact product URL and new envelope, not merely that a POST occurred.
-(created, skipped, failed, rejected), stub, _, _ = upload([Response(200, {"errors": []})])
+(created, skipped, failed, rejected), stub, _, processor = upload([Response(200, {"errors": []})])
+from taxii_processor import BATCH_SIZE
+check(BATCH_SIZE == 100, "batch slicing must use the API limit of 100")
 check((created, skipped, failed, rejected) == (3, 0, 0, set()), "clean upload miscounted")
 url = stub.post_calls[0][0] if stub.post_calls else ""
 body = stub.post_bodies[0] if stub.post_bodies else {}
@@ -39,6 +41,9 @@ check(set(body) == {"sourcesystem", "stixobjects"}, "wrong upload envelope: %r" 
 check(body.get("sourcesystem") == "SOCRadar TAXII" and body.get("sourcesystem") != "Microsoft Sentinel",
       "source system drifted: %r" % body.get("sourcesystem"))
 check(body.get("stixobjects") == records(), "STIX records were not sent intact: %r" % body)
+check(processor.credential.scopes == [("https://management.azure.com/.default",)],
+      "upload requested the wrong token scope: %r" % processor.credential.scopes)
+check(stub.post_timeouts == [60], "upload timeout changed: %r" % stub.post_timeouts)
 
 for label, response in (
     ("empty", Response(200, ValueError("must not parse"), text="")),
@@ -89,9 +94,10 @@ result, stub, _, _ = upload([], records(101))
 check(result == (0, 0, 101, set()) and not stub.post_calls,
       "101-object batch made HTTP calls or was miscounted: %r %r" % (result, stub.post_calls))
 
-result, stub, sleeps, _ = upload([Response(503, headers={"Retry-After": "0"})])
-check(result == (0, 0, 3, set()) and len(stub.post_calls) == 3 and sleeps == [0.0, 0.0],
-      "retry cap changed: result=%r calls=%d sleeps=%r" % (result, len(stub.post_calls), sleeps))
+for status in (500, 503):
+    result, stub, sleeps, _ = upload([Response(status, headers={"Retry-After": "0"})])
+    check(result == (0, 0, 3, set()) and len(stub.post_calls) == 3 and sleeps == [0.0, 0.0],
+          "%d retry cap changed: result=%r calls=%d sleeps=%r" % (status, result, len(stub.post_calls), sleeps))
 stub = FakeRequests(post_responses=[Response(429, headers={"Retry-After": "30"})])
 sleeps = []
 processor = make_processor(stub, sleeps=sleeps, time_budget_seconds=5)

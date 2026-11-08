@@ -63,6 +63,7 @@ class FakeRequests:
         self.get_calls = []
         self.post_calls = []
         self.post_bodies = []
+        self.post_timeouts = []
 
     # A page that keeps saying "more" would loop forever if the code under test
     # stopped honouring its stop conditions, so the stub refuses to serve an
@@ -82,6 +83,7 @@ class FakeRequests:
         return self._next(self.get_responses, self.get_calls, (url, kwargs.get("params")))
 
     def post(self, url, **kwargs):
+        self.post_timeouts.append(kwargs.get("timeout"))
         self.post_bodies.append(kwargs.get("json") or {})
         return self._next(self.post_responses, self.post_calls,
                           (url, len((kwargs.get("json") or {}).get("stixobjects", []))))
@@ -104,7 +106,11 @@ class FakeTable:
 
 
 class FakeCredential:
+    def __init__(self):
+        self.scopes = []
+
     def get_token(self, *_scopes):
+        self.scopes.append(_scopes)
         return types.SimpleNamespace(token="token")
 
 

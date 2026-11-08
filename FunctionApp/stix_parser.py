@@ -1,6 +1,6 @@
 """
 STIX 2.1 Parser for SOCRadar TAXII indicators.
-Prepares STIX indicators for Microsoft Sentinel TI uploadIndicators API.
+Prepares STIX indicators for Microsoft Sentinel's STIX objects upload API.
 """
 
 import re
@@ -40,7 +40,7 @@ def parse_stix_pattern(pattern):
 
 def prepare_for_sentinel(stix_obj, collection_id=""):
     """
-    Prepare a STIX 2.1 indicator for Sentinel TI uploadIndicators API.
+    Prepare a STIX 2.1 indicator for Sentinel's STIX objects upload API.
     Adds Sentinel extension and SOCRadar labels. Strips non-STIX fields.
     Returns enriched indicator dict, or None if not a valid indicator.
 

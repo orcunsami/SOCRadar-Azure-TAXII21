@@ -283,7 +283,7 @@ SCENARIOS = {
     "stop_fail": dict(mode="good", table=False, stop_fail=True),
     "stop_noop": dict(mode="good", table=False, stop_noop=True),
 }
-with ThreadPoolExecutor(max_workers=len(SCENARIOS)) as pool:
+with ThreadPoolExecutor(max_workers=4) as pool:
     futures = {name: pool.submit(run, name=name, **kw) for name, kw in SCENARIOS.items()}
     R = {name: f.result() for name, f in futures.items()}
 
