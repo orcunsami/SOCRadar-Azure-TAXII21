@@ -211,15 +211,18 @@ traces
 
 Each run logs step-by-step progress per collection (Step 1: init, Step 2: per-collection fetch, Step 3: complete).
 
-### Where Data Appears
-
-**Threat Intelligence indicators** are uploaded to the `ThreatIntelIndicators` table in Log Analytics. You can view them in:
-
-- Azure portal: **Microsoft Sentinel > Threat management > Threat intelligence**
-- **Log Analytics > Logs** (Azure portal) or **Investigation & response > Hunting > Advanced hunting** (Defender portal, also reads secondary workspaces) with query: `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`
-- Defender portal TI page: **Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace)**
+## Where to see it in the Microsoft Defender portal
 
 Microsoft Sentinel in the Azure portal is supported until 31 March 2027; after that it is available only in the Microsoft Defender portal.
+
+| What | Defender portal |
+|---|---|
+| Incidents raised by the threat hunting rules | Investigation & response > Incidents & alerts > Incidents |
+| Indicators and audit data in KQL | Investigation & response > Hunting > Advanced hunting: `ThreatIntelIndicators`, `SOCRadar_TAXII_Audit_CL` (if audit logging is enabled); select the workspace at the top right, including a secondary workspace |
+| Indicators in the TI page | Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace) |
+| SOCRadar TAXII 2.1 Dashboard | Microsoft Sentinel > Threat management > Workbooks. The Workbooks page shows data from the primary workspace only. |
+
+In the Azure portal, indicators are under **Microsoft Sentinel > Threat management > Threat intelligence**, and both tables are under **Log Analytics > Logs**. Query indicators with `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`. Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Azure portal: Microsoft Sentinel > Workbooks).
 
 **The same indicator more than once.** The checkpoint stops runs from re-fetching, but inside one fetch the TAXII server can send the same indicator on several pages (measured 1 Oct 2026 on one collection: 3552 indicator objects for 1268 distinct STIX ids, 2.8 times each). The import does not collapse them: every copy is uploaded. So `IndicatorsCreated` counts uploads Microsoft Sentinel accepted, not distinct indicators, and `ThreatIntelIndicators` in Log Analytics is an append log with one row per upload. `count()` over it overstates, and the workbook tiles that use `count()` (Indicators by Type, by Source, over time) count rows. For the number of different indicators count the ids:
 
@@ -268,8 +271,6 @@ recoverable, a dropped one is not. Retries cover a transient 429 or 5xx from
 the upload API; a persistent 4xx needs the cause fixed. The
 `SOCRadar TAXII indicators did not reach Microsoft Sentinel` analytic rule
 (Content Hub) reports this.
-
-Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Azure portal: Microsoft Sentinel > Workbooks; Defender portal: Microsoft Sentinel > Threat management > Workbooks).
 
 ## Threat hunting rules
 
