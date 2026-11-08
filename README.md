@@ -220,7 +220,7 @@ Microsoft Sentinel in the Azure portal is supported until 31 March 2027; after t
 | Incidents raised by the threat hunting rules | Investigation & response > Incidents & alerts > Incidents |
 | Indicators and audit data in KQL | Investigation & response > Hunting > Advanced hunting: `ThreatIntelIndicators`, `SOCRadar_TAXII_Audit_CL` (if audit logging is enabled); select the workspace at the top right, including a secondary workspace |
 | Indicators in the TI page | Threat intelligence > Intel management (in tenants with the consolidated Threat Intelligence Explorer: Threat intelligence > Intel explorer > Indicators; shows the primary workspace) |
-| SOCRadar TAXII 2.1 Dashboard | Microsoft Sentinel > Threat management > Workbooks. The Workbooks page shows data from the primary workspace only. |
+| SOCRadar TAXII 2.1 Dashboard | Microsoft Sentinel > Threat management > Workbooks. The Workbooks page in the Defender portal shows data from the primary workspace only; if this workspace is secondary, query the tables with Advanced hunting instead. |
 
 In the Azure portal, indicators are under **Microsoft Sentinel > Threat management > Threat intelligence**, and both tables are under **Log Analytics > Logs**. Query indicators with `ThreatIntelIndicators | where SourceSystem == "SOCRadar TAXII"`. Both tables are also visualized in the **SOCRadar TAXII 2.1 Dashboard** workbook (Azure portal: Microsoft Sentinel > Workbooks).
 
