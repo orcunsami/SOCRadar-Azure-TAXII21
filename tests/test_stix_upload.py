@@ -120,6 +120,39 @@ check(result["indicators_failed"] == 1 and result["complete"] is False,
 check(table.upserts and table.upserts[-1]["Cursor"] == "",
       "malformed 200 advanced the TAXII checkpoint: %r" % table.upserts)
 
+# A TAXII page may contain more than Sentinel's 100-object upload limit even
+# though PAGE_LIMIT currently happens to match it. Exercise run(), rather than
+# upload_batch(), so an off-by-one slice cannot hide behind the batch guard.
+# Rejections at each boundary and revoked objects prove that the local indexes
+# and the page-level counters stay tied to the batch they came from.
+many = [indicator("198.51.100.%d" % n) for n in range(201)]
+many[99]["revoked"] = True
+many[100]["revoked"] = True
+many[200]["revoked"] = True
+table = FakeTable()
+stub = FakeRequests(
+    get_responses=[Response(200, page([], objects=many),
+                            headers={"X-TAXII-Date-Added-Last": "2026-11-09T00:00:00Z"})],
+    post_responses=[
+        Response(200, {"errors": [{"recordIndex": 99, "errorMessages": ["rejected"]}]}),
+        Response(200, {"errors": [{"recordIndex": 0, "errorMessages": ["rejected"]}]}),
+        Response(200, {"errors": []}),
+    ],
+)
+result = make_processor(stub, table=table, sleeps=[]).run()
+sizes = [len(body["stixobjects"]) for body in stub.post_bodies]
+sent_ids = [obj["id"] for body in stub.post_bodies for obj in body["stixobjects"]]
+expected_ids = [obj["id"] for obj in many]
+check(sizes == [100, 100, 1], "201 objects were not sliced at exact 100 boundaries: %r" % sizes)
+check(sent_ids == expected_ids and len(sent_ids) == len(set(sent_ids)),
+      "batching changed indicator order or sent an indicator more than once")
+check(result["indicators_created"] == 198 and result["indicators_skipped"] == 2 and
+      result["indicators_revoked"] == 1 and result["indicators_failed"] == 0 and result["complete"] is True,
+      "batch boundary counters drifted: %r" % result)
+check(table.upserts and table.upserts[-1]["TotalIndicators"] == 198 and
+      table.upserts[-1]["PagesFetched"] == 1 and table.upserts[-1]["AddedAfter"] == "2026-11-09T00:00:00Z",
+      "successful split page checkpoint drifted: %r" % table.upserts)
+
 if failures:
     for line in failures:
         print("FAIL " + line)
