@@ -36,6 +36,13 @@
                 "description": "Location/region of the Log Analytics workspace"
             }
         },
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Location of the Function App and its supporting resources"
+            }
+        },
         "ApiRoots": {
             "type": "string",
             "metadata": {
@@ -748,7 +755,7 @@
             "type": "Microsoft.Storage/storageAccounts",
             "apiVersion": "2025-01-01",
             "name": "[variables('storageAccountName')]",
-            "location": "[resourceGroup().location]",
+            "location": "[parameters('location')]",
             "sku": {
                 "name": "Standard_LRS"
             },
@@ -1142,7 +1149,7 @@
             "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
             "apiVersion": "2023-01-31",
             "name": "[variables('managedIdentityName')]",
-            "location": "[resourceGroup().location]"
+            "location": "[parameters('location')]"
         },
         {
             "dependsOn": ["[resourceId('Microsoft.Resources/deployments', 'precheck-workspace-exists')]",
@@ -1150,7 +1157,7 @@
             "type": "Microsoft.Web/serverfarms",
             "apiVersion": "2023-12-01",
             "name": "[variables('hostingPlanName')]",
-            "location": "[resourceGroup().location]",
+            "location": "[parameters('location')]",
             "sku": {
                 "name": "Y1",
                 "tier": "Dynamic"
@@ -1164,7 +1171,7 @@
             "type": "Microsoft.Insights/components",
             "apiVersion": "2020-02-02",
             "name": "[variables('appInsightsName')]",
-            "location": "[resourceGroup().location]",
+            "location": "[parameters('location')]",
             "kind": "web",
             "dependsOn": [
                 "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('WorkspaceName'))]"
@@ -1181,7 +1188,7 @@
             "type": "Microsoft.Web/sites",
             "apiVersion": "2023-12-01",
             "name": "[variables('functionAppName')]",
-            "location": "[resourceGroup().location]",
+            "location": "[parameters('location')]",
             "kind": "functionapp,linux",
             "identity": {
                 "type": "UserAssigned",
@@ -1209,11 +1216,11 @@
                     "appSettings": [
                         {
                             "name": "AzureWebJobsStorage",
-                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2025-01-01').keys[0].value, ';EndpointSuffix=core.windows.net')]"
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2025-01-01').keys[0].value, ';EndpointSuffix=', environment().suffixes.storage)]"
                         },
                         {
                             "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
-                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2025-01-01').keys[0].value, ';EndpointSuffix=core.windows.net')]"
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2025-01-01').keys[0].value, ';EndpointSuffix=', environment().suffixes.storage)]"
                         },
                         {
                             "name": "WEBSITE_CONTENTSHARE",
@@ -1389,7 +1396,7 @@
             "type": "Microsoft.Resources/deploymentScripts",
             "apiVersion": "2020-10-01",
             "name": "[concat('triggerFirstRun-', uniqueString(resourceGroup().id))]",
-            "location": "[resourceGroup().location]",
+            "location": "[parameters('location')]",
             "kind": "AzureCLI",
             "identity": {
                 "type": "UserAssigned",
@@ -1409,8 +1416,16 @@
                 "retentionInterval": "PT26H",
                 "timeout": "PT30M",
                 "cleanupPreference": "OnSuccess",
-                "scriptContent": "set -e\n# key check\nif [ -n \"$TAXII_USERNAME\" ] && [ -n \"$TAXII_PASSWORD\" ] && [ -n \"$API_ROOT\" ] && [ -n \"$COLLECTION_ID\" ]; then\n  tuser=$(printf '%s' \"$TAXII_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\n  tpass=$(printf '%s' \"$TAXII_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\n  keycode=$(printf 'user = \"%s:%s\"\\n' \"$tuser\" \"$tpass\" | curl -s -o /dev/null -w '%{http_code}' -m 60 -A 'Mozilla/5.0' -H 'Accept: application/taxii+json;version=2.1' -K - \"https://taxii2.socradar.com/$API_ROOT/collections/$COLLECTION_ID/\" || true)\n  case \"$keycode\" in\n    200) echo 'the SOCRadar TAXII credentials were accepted' ;;\n    401) echo 'SOCRadar TAXII rejected the username or password (HTTP 401): check TAXIIUsername and TAXIIPassword and deploy again' >&2; exit 1 ;;\n    *) echo \"the SOCRadar TAXII credentials could not be checked (HTTP $keycode), continuing\" ;;\n  esac\nfi\n# end key check\ncode=$(curl -s -o /dev/null -w '%{http_code}' -L \"$PACKAGE_URL\"); [ \"$code\" = 200 ] || { echo \"package URL returned HTTP $code\" >&2; exit 1; }; curl -sSL -o /tmp/package.zip \"$PACKAGE_URL\"; python3 -c \"import zipfile;zipfile.ZipFile('/tmp/package.zip').testzip()\" >/dev/null 2>&1 || { echo 'downloaded package is not a readable zip' >&2; exit 1; }; echo \"package downloaded: $(stat -c%s /tmp/package.zip) bytes\"; echo 'reading the app storage connection while the role assignment propagates'; CONN=; for wait in $(seq 1 8); do CONN=$(az functionapp config appsettings list --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --query \"[?name=='AzureWebJobsStorage'].value\" -o tsv 2>/dev/null || true); [ -n \"$CONN\" ] && break; echo \"attempt $wait: the app settings are not readable yet\"; sleep 15; done; [ -n \"$CONN\" ] || { echo 'the app settings stayed unreadable for two minutes: the Website Contributor assignment never became effective' >&2; exit 1; }; SA=$(printf '%s' \"$CONN\" | sed -n 's/.*AccountName=\\([^;]*\\).*/\\1/p'); [ -n \"$SA\" ] || { echo 'the app storage connection carries no AccountName' >&2; exit 1; }; echo \"staging the package in the app storage account $SA\"; pointer() { az functionapp config appsettings list --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --query \"[?name=='WEBSITE_RUN_FROM_PACKAGE'].value\" -o tsv 2>/dev/null; }; shape() { case \"$(pointer)\" in *function-releases*) echo blob;; 1) echo one;; '') echo missing;; *) echo other;; esac; }; staged() { [ \"$(shape)\" = blob ]; }; count() { az rest --method get --url \"https://management.azure.com/subscriptions/$SUB_ID/resourceGroups/$RG_NAME/providers/Microsoft.Web/sites/$FA_NAME/functions?api-version=2023-12-01\" --query 'length(value)' -o tsv 2>/dev/null || echo 0; }; indexed() { n=$(count); case \"$n\" in ''|*[!0-9]*) return 1;; esac; [ \"$n\" -ge 1 ]; }; BLOB=package-$(date -u +%Y%m%d%H%M%S).zip; for attempt in $(seq 1 6); do az storage container create --name function-releases --connection-string \"$CONN\" -o none >/dev/null 2>&1 || true; if az storage blob upload --container-name function-releases --name \"$BLOB\" --file /tmp/package.zip --overwrite --connection-string \"$CONN\" -o none >/dev/null 2>&1; then SAS=$(az storage blob generate-sas --container-name function-releases --name \"$BLOB\" --permissions r --expiry 2099-12-31T00:00:00Z --connection-string \"$CONN\" -o tsv 2>/dev/null); { [ -n \"$SAS\" ] && az functionapp config appsettings set --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --settings \"WEBSITE_RUN_FROM_PACKAGE=https://$SA.blob.core.windows.net/function-releases/$BLOB?$SAS\" -o none >/dev/null 2>&1; } || echo \"attempt $attempt: no read token was issued for the staged package\"; else echo \"attempt $attempt: the package upload failed; the readings decide\"; fi; echo \"attempt $attempt: pointer=$(shape) functions=$(count)\"; staged && break; sleep 30; done; staged || { echo 'the package pointer never became a blob under function-releases: the app would have no code to reload' >&2; exit 1; }; echo 'restarting the app so the host reloads the staged package'; az functionapp restart --name \"$FA_NAME\" --resource-group \"$RG_NAME\" -o none >/dev/null 2>&1 || echo 'the restart call did not go through; the readings decide'; for i in $(seq 1 40); do sleep 15; indexed && { echo \"$(count) function(s) indexed after $((i * 15))s; run_on_startup triggers the first import\"; exit 0; }; done; echo 'the package is staged but no function was indexed in 10 minutes' >&2; exit 1",
+                "scriptContent": "set -e\n# key check\nif [ -n \"$TAXII_USERNAME\" ] && [ -n \"$TAXII_PASSWORD\" ] && [ -n \"$API_ROOT\" ] && [ -n \"$COLLECTION_ID\" ]; then\n  tuser=$(printf '%s' \"$TAXII_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\n  tpass=$(printf '%s' \"$TAXII_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\n  keycode=$(printf 'user = \"%s:%s\"\\n' \"$tuser\" \"$tpass\" | curl -s -o /dev/null -w '%{http_code}' -m 60 -A 'Mozilla/5.0' -H 'Accept: application/taxii+json;version=2.1' -K - \"https://taxii2.socradar.com/$API_ROOT/collections/$COLLECTION_ID/\" || true)\n  case \"$keycode\" in\n    200) echo 'the SOCRadar TAXII credentials were accepted' ;;\n    401) echo 'SOCRadar TAXII rejected the username or password (HTTP 401): check TAXIIUsername and TAXIIPassword and deploy again' >&2; exit 1 ;;\n    *) echo \"the SOCRadar TAXII credentials could not be checked (HTTP $keycode), continuing\" ;;\n  esac\nfi\n# end key check\ncode=$(curl -s -o /dev/null -w '%{http_code}' -L \"$PACKAGE_URL\"); [ \"$code\" = 200 ] || { echo \"package URL returned HTTP $code\" >&2; exit 1; }; curl -sSL -o /tmp/package.zip \"$PACKAGE_URL\"; python3 -c \"import zipfile;zipfile.ZipFile('/tmp/package.zip').testzip()\" >/dev/null 2>&1 || { echo 'downloaded package is not a readable zip' >&2; exit 1; }; echo \"package downloaded: $(stat -c%s /tmp/package.zip) bytes\"; echo 'reading the app storage connection while the role assignment propagates'; CONN=; for wait in $(seq 1 8); do CONN=$(az functionapp config appsettings list --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --query \"[?name=='AzureWebJobsStorage'].value\" -o tsv 2>/dev/null || true); [ -n \"$CONN\" ] && break; echo \"attempt $wait: the app settings are not readable yet\"; sleep 15; done; [ -n \"$CONN\" ] || { echo 'the app settings stayed unreadable for two minutes: the Website Contributor assignment never became effective' >&2; exit 1; }; SA=$(printf '%s' \"$CONN\" | sed -n 's/.*AccountName=\\([^;]*\\).*/\\1/p'); [ -n \"$SA\" ] || { echo 'the app storage connection carries no AccountName' >&2; exit 1; }; echo \"staging the package in the app storage account $SA\"; pointer() { az functionapp config appsettings list --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --query \"[?name=='WEBSITE_RUN_FROM_PACKAGE'].value\" -o tsv 2>/dev/null; }; shape() { case \"$(pointer)\" in *function-releases*) echo blob;; 1) echo one;; '') echo missing;; *) echo other;; esac; }; staged() { [ \"$(shape)\" = blob ]; }; count() { az rest --method get --url \"${RESOURCE_MANAGER%/}/subscriptions/$SUB_ID/resourceGroups/$RG_NAME/providers/Microsoft.Web/sites/$FA_NAME/functions?api-version=2023-12-01\" --query 'length(value)' -o tsv 2>/dev/null || echo 0; }; indexed() { n=$(count); case \"$n\" in ''|*[!0-9]*) return 1;; esac; [ \"$n\" -ge 1 ]; }; BLOB=package-$(date -u +%Y%m%d%H%M%S).zip; for attempt in $(seq 1 6); do az storage container create --name function-releases --connection-string \"$CONN\" -o none >/dev/null 2>&1 || true; if az storage blob upload --container-name function-releases --name \"$BLOB\" --file /tmp/package.zip --overwrite --connection-string \"$CONN\" -o none >/dev/null 2>&1; then SAS=$(az storage blob generate-sas --container-name function-releases --name \"$BLOB\" --permissions r --expiry 2099-12-31T00:00:00Z --connection-string \"$CONN\" -o tsv 2>/dev/null); { [ -n \"$SAS\" ] && az functionapp config appsettings set --name \"$FA_NAME\" --resource-group \"$RG_NAME\" --settings \"WEBSITE_RUN_FROM_PACKAGE=https://$SA.blob.$STORAGE_SUFFIX/function-releases/$BLOB?$SAS\" -o none >/dev/null 2>&1; } || echo \"attempt $attempt: no read token was issued for the staged package\"; else echo \"attempt $attempt: the package upload failed; the readings decide\"; fi; echo \"attempt $attempt: pointer=$(shape) functions=$(count)\"; staged && break; sleep 30; done; staged || { echo 'the package pointer never became a blob under function-releases: the app would have no code to reload' >&2; exit 1; }; echo 'restarting the app so the host reloads the staged package'; az functionapp restart --name \"$FA_NAME\" --resource-group \"$RG_NAME\" -o none >/dev/null 2>&1 || echo 'the restart call did not go through; the readings decide'; for i in $(seq 1 40); do sleep 15; indexed && { echo \"$(count) function(s) indexed after $((i * 15))s; run_on_startup triggers the first import\"; exit 0; }; done; echo 'the package is staged but no function was indexed in 10 minutes' >&2; exit 1",
                 "environmentVariables": [
+                    {
+                        "name": "RESOURCE_MANAGER",
+                        "value": "[environment().resourceManager]"
+                    },
+                    {
+                        "name": "STORAGE_SUFFIX",
+                        "value": "[environment().suffixes.storage]"
+                    },
                     {
                         "name": "FA_NAME",
                         "value": "[variables('functionAppName')]"

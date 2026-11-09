@@ -24,6 +24,7 @@ scripts/*
 !scripts/test.config.example
 docs/*
 !docs/setup-guide.md
+!docs/arm-ttk-exceptions.md
 Seperate-Repo/
 Solution/
 dist/

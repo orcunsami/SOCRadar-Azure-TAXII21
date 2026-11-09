@@ -2,6 +2,8 @@
 
 Imports STIX 2.1 threat intelligence indicators from SOCRadar TAXII server into Microsoft Sentinel. Supports multiple API roots and collections in a single deployment.
 
+This integration supports Azure public cloud. Environment-aware deployment URLs do not change the Python token scopes or imply sovereign-cloud support.
+
 ## Deployment
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Forcunsami%2FSOCRadar-Azure-TAXII21%2Fmaster%2Fazuredeploy.json)
