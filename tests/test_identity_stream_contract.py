@@ -3,9 +3,42 @@
 import ast
 import json
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 template = json.loads((ROOT / 'azuredeploy.json').read_text())
+parameter_table = (ROOT / 'README.md').read_text().split('## Parameters\n', 1)[1].split('\n## ', 1)[0]
+documented = set(re.findall(r'^\|\s*`([^`]+)`\s*\|', parameter_table, re.M))
+assert documented == set(template['parameters']), 'README parameter names differ from template: missing %s, extra %s' % (sorted(set(template['parameters']) - documented), sorted(documented - set(template['parameters'])))
+
+support_types = {
+    'microsoft.storage/storageaccounts',
+    'microsoft.managedidentity/userassignedidentities',
+    'microsoft.web/serverfarms',
+    'microsoft.insights/components',
+    'microsoft.web/sites',
+    'microsoft.resources/deploymentscripts',
+}
+found_types = set()
+
+def check_cloud_contract(value, path='$'):
+    if isinstance(value, dict):
+        resource_type = str(value.get('type', '')).lower()
+        if resource_type in support_types:
+            found_types.add(resource_type)
+            assert value.get('location') == "[parameters('location')]", 'resource location must use location parameter: ' + resource_type
+        for key, child in value.items():
+            if key != '$schema':
+                check_cloud_contract(key, path + '.<key>')
+                check_cloud_contract(child, path + '.' + key)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            check_cloud_contract(child, path + '[%d]' % index)
+    elif isinstance(value, str):
+        assert not any(host in value.lower() for host in ('core.windows.net', 'management.azure.com', 'blob.core')), 'hardcoded Azure endpoint at ' + path
+
+check_cloud_contract(template)
+assert found_types == support_types, 'missing supporting resource types'
 resources = template['resources']
 script = next(r for r in resources if r['type'] == 'Microsoft.Resources/deploymentScripts')['properties']
 script_env = {s['name']: s.get('value') for s in script['environmentVariables']}

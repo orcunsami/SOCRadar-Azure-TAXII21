@@ -37,6 +37,8 @@ Step by step: [docs/setup-guide.md](docs/setup-guide.md).
 | `WorkspaceName` | Yes | - | Microsoft Sentinel workspace name |
 | `DeployNewWorkspace` | No | `false` | `false` uses the workspace that already exists: the workspace itself is not updated, so its pricing tier, retention and daily cap are never changed, and a name that does not exist fails before anything is created. Set `true` only to create a new workspace named `WorkspaceName`; do not set it on an existing workspace that uses a commitment tier. |
 | `WorkspaceResourceGroup` | No | deployment RG | Resource group of the workspace when it is not the one you deploy to. See [Workspace in another resource group](#workspace-in-another-resource-group). |
+| `WorkspaceLocation` | No | `[resourceGroup().location]` | Region of the Log Analytics workspace and its DCE, DCR and workbook. Must match the workspace region, including an existing cross-RG workspace. |
+| `location` | No | `[resourceGroup().location]` | Region of supporting resources: storage, managed identity, hosting plan, Application Insights, Function App and deployment script. |
 | `ApiRoots` | Yes | - | Comma-separated TAXII API root names (e.g., `radar_alpha,radar_gamma`) |
 | `CollectionIds` | Yes | - | Comma-separated collection UUIDs matching API roots order |
 | `TAXIIUsername` | Yes | - | TAXII username issued by SOCRadar, e.g. `radar_<company id>`, not the bare company ID |
@@ -47,6 +49,7 @@ Step by step: [docs/setup-guide.md](docs/setup-guide.md).
 | `EnableThreatHuntRules` | No | true | Create the six [threat hunting rules](#threat-hunting-rules) in Microsoft Sentinel. |
 | `ThreatHuntRuleSeverity` | No | Medium | Severity of the alerts those rules raise (Informational, Low, Medium, High). |
 | `PackageUri` | No | published release | Function App deployment package. Leave the default unless you are testing a build before it is released. |
+| `_packagePushTimestamp` | No | `[utcNow()]` | Automatic deployment marker that reruns package staging on redeploy. Leave the default. |
 
 Each API root position matches the corresponding collection ID position. For example, `radar_alpha,radar_gamma` with `fd3fec42-...,f260cf45-...` means radar_alpha uses fd3fec42 and radar_gamma uses f260cf45.
 
